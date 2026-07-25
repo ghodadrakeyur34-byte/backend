@@ -1,0 +1,82 @@
+[
+  {
+    "email": "test@example.com",
+    "name": "Test Seller",
+    "phone": "0399-9999999",
+    "createdAt": "2026-07-04T15:16:37.445Z",
+    "loggedInAt": "2026-07-06T16:02:50.362Z",
+    "verified": {
+      "phone": false,
+      "email": false
+    },
+    "status": "active",
+    "statusChangedAt": "2026-07-24T16:40:18.522Z"
+  },
+  {
+    "email": "newuser@test.com",
+    "name": "John Doe",
+    "phone": "0300-1234567",
+    "createdAt": "2026-07-06T05:00:36.940Z",
+    "loggedInAt": "2026-07-20T06:47:08.873Z"
+  },
+  {
+    "email": "test_auth@example.com",
+    "name": "Auth Tester",
+    "phone": "0311-9876543",
+    "createdAt": "2026-07-06T05:11:09.971Z",
+    "loggedInAt": "2026-07-06T05:12:18.042Z"
+  },
+  {
+    "email": "keyurghodadra34@gmail.com",
+    "name": "keyur ghodadra",
+    "phone": "9913494523",
+    "createdAt": "2026-07-06T05:17:53.109Z",
+    "loggedInAt": "2026-07-06T05:17:53.109Z",
+    "verified": {
+      "phone": false
+    }
+  },
+  {
+    "email": "k73234987@gmail.com",
+    "name": "keyur Keyur",
+    "phone": "+916353467756",
+    "createdAt": "2026-07-06T16:05:17.163Z",
+    "loggedInAt": "2026-07-22T08:44:57.425Z",
+    "password": "111111",
+    "verified": {
+      "phone": false,
+      "email": false,
+      "id": false
+    }
+  },
+  {
+    "email": "vddsdvsvf@gmail.com",
+    "name": "keyur Keyur",
+    "phone": "+916353467756",
+    "password": "111111",
+    "createdAt": "2026-07-22T08:30:07.552Z",
+    "loggedInAt": "2026-07-22T08:30:07.552Z"
+  },
+  {
+    "email": "vdsvfghhfh@gmail.com",
+    "name": "keyur Keyur",
+    "phone": "+916353467756",
+    "password": "aaaaaa",
+    "createdAt": "2026-07-22T08:31:08.892Z",
+    "loggedInAt": "2026-07-22T08:31:40.913Z"
+  },
+  {
+    "email": "sectest@test.com",
+    "name": "Security Test",
+    "phone": "1234567890",
+    "passwordHash": "$2b$12$pVgdqGeaIfuIOLeMIWkw7epxBWSYELmN/Ts7mTrVaxubU2MlkmozO",
+    "createdAt": "2026-07-24T16:13:56.474Z",
+    "loggedInAt": "2026-07-24T16:13:56.474Z",
+    "status": "active",
+    "verified": {
+      "phone": false,
+      "email": false,
+      "id": false
+    }
+  }
+]

@@ -1,0 +1,124 @@
+{
+  "propertyTypes": [
+    {
+      "id": "house",
+      "label": "House",
+      "icon": "🏠"
+    },
+    {
+      "id": "plot",
+      "label": "Plot",
+      "icon": "📐"
+    }
+  ],
+  "cities": [
+    {
+      "id": "veraval",
+      "label": "Veraval",
+      "lat": 20.9082,
+      "lng": 70.3703
+    },
+    {
+      "id": "una",
+      "label": "Una",
+      "lat": 20.8227,
+      "lng": 71.0421
+    },
+    {
+      "id": "junagadh",
+      "label": "Junagadh",
+      "lat": 21.5222,
+      "lng": 70.4579
+    }
+  ],
+  "amenities": [
+    {
+      "id": "parking",
+      "label": "Car Parking",
+      "icon": "🅿️"
+    },
+    {
+      "id": "garden",
+      "label": "Garden/Lawn",
+      "icon": "🌿"
+    },
+    {
+      "id": "security",
+      "label": "24/7 Security",
+      "icon": "🔒"
+    },
+    {
+      "id": "water",
+      "label": "Water Supply",
+      "icon": "💧"
+    },
+    {
+      "id": "electricity",
+      "label": "Electricity",
+      "icon": "⚡"
+    },
+    {
+      "id": "gas",
+      "label": "Gas",
+      "icon": "🔥"
+    },
+    {
+      "id": "school",
+      "label": "Near School",
+      "icon": "🏫"
+    },
+    {
+      "id": "hospital",
+      "label": "Near Hospital",
+      "icon": "🏥"
+    },
+    {
+      "id": "market",
+      "label": "Near Market",
+      "icon": "🛒"
+    },
+    {
+      "id": "mosque",
+      "label": "Near Mosque",
+      "icon": "🕌"
+    }
+  ],
+  "priceRanges": [
+    {
+      "id": "under5l",
+      "label": "Under ₨ 5 Lac",
+      "min": 0,
+      "max": 500000
+    },
+    {
+      "id": "5l-25l",
+      "label": "₨ 5 Lac – 25 Lac",
+      "min": 500000,
+      "max": 2500000
+    },
+    {
+      "id": "25l-50l",
+      "label": "₨ 25 Lac – 50 Lac",
+      "min": 2500000,
+      "max": 5000000
+    },
+    {
+      "id": "50l-1cr",
+      "label": "₨ 50 Lac – 1 Crore",
+      "min": 5000000,
+      "max": 10000000
+    },
+    {
+      "id": "1cr-5cr",
+      "label": "₨ 1 Crore – 5 Crore",
+      "min": 10000000,
+      "max": 50000000
+    },
+    {
+      "id": "above5cr",
+      "label": "Above ₨ 5 Crore",
+      "min": 50000000,
+      "max": null
+    }
+  ]
+}
