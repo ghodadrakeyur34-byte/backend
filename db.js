@@ -99,10 +99,18 @@ class AtomicJSONStore {
   }
 }
 
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const SETTINGS_SEED = {
+  helpMobile: '+91 98765 43210',
+  helpEmail: 'support@marimilkat.com',
+  helpHours: 'Mon - Sat: 9:00 AM - 8:00 PM',
+};
+
 const listingsStore = new AtomicJSONStore(LISTINGS_FILE, SEED);
 const usersStore = new AtomicJSONStore(USERS_FILE, []);
 const reportsStore = new AtomicJSONStore(REPORTS_FILE, []);
 const categoriesStore = new AtomicJSONStore(CATEGORIES_FILE, CATEGORIES_SEED);
+const settingsStore = new AtomicJSONStore(SETTINGS_FILE, SETTINGS_SEED);
 
 export async function getListings() {
   return await listingsStore.read();
@@ -134,4 +142,12 @@ export async function getCategories() {
 
 export async function saveCategories(categories) {
   await categoriesStore.write(categories);
+}
+
+export async function getSettings() {
+  return await settingsStore.read();
+}
+
+export async function saveSettings(settings) {
+  await settingsStore.write(settings);
 }

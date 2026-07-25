@@ -6,7 +6,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcrypt';
 import xss from 'xss';
-import { getListings, saveListings, getUsers, saveUsers, getReports, saveReports, getCategories, saveCategories } from './db.js';
+import { getListings, saveListings, getUsers, saveUsers, getReports, saveReports, getCategories, saveCategories, getSettings, saveSettings } from './db.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -780,6 +780,40 @@ app.put('/api/listings/:id/price', async (req, res) => {
   } catch (err) {
     console.error('Error updating price:', err);
     res.status(500).json({ error: 'Server error updating price.' });
+  }
+});
+
+// ===== SITE SETTINGS API =====
+
+// GET /api/settings — public endpoint to fetch contact details & settings
+app.get('/api/settings', async (req, res) => {
+  try {
+    const settings = await getSettings();
+    res.json(settings);
+  } catch (err) {
+    console.error('Error fetching settings:', err);
+    res.status(500).json({ error: 'Server error fetching settings.' });
+  }
+});
+
+// PUT /api/settings — update contact settings (admin only)
+app.put('/api/settings', requireAdmin, async (req, res) => {
+  try {
+    const { helpMobile, helpEmail, helpHours } = req.body;
+    const current = await getSettings();
+
+    const updated = {
+      ...current,
+      helpMobile: cleanText(helpMobile) || current.helpMobile,
+      helpEmail: cleanText(helpEmail) || current.helpEmail,
+      helpHours: cleanText(helpHours) || current.helpHours,
+    };
+
+    await saveSettings(updated);
+    res.json({ success: true, message: 'Help desk settings updated successfully.', settings: updated });
+  } catch (err) {
+    console.error('Error updating settings:', err);
+    res.status(500).json({ error: 'Server error updating settings.' });
   }
 });
 
