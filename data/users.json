@@ -78,5 +78,20 @@
       "email": false,
       "id": false
     }
+  },
+  {
+    "email": "admin@marimilkat.com",
+    "name": "Admin",
+    "phone": "",
+    "passwordHash": "$2b$12$.EwWM6juaOapJS4Z4uYnau5YRrjtlJjKaPe81WiA5T6F9ZAwI1/aq",
+    "role": "admin",
+    "createdAt": "2026-07-28T07:45:35.006Z",
+    "loggedInAt": "2026-07-28T07:45:35.007Z",
+    "status": "active",
+    "verified": {
+      "phone": false,
+      "email": true,
+      "id": false
+    }
   }
 ]
