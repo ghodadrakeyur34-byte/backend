@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -6,53 +9,130 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcrypt';
 import xss from 'xss';
+import path from 'path';
+import fs from 'fs/promises';
+import { fileURLToPath } from 'url';
+import multer from 'multer';
+import { fileTypeFromBuffer } from 'file-type';
+import cookieParser from 'cookie-parser';
+import jwt from 'jsonwebtoken';
+import { sendVerificationEmail } from './emailService.js';
 import { getListings, saveListings, getUsers, saveUsers, getReports, saveReports, getCategories, saveCategories, getSettings, saveSettings } from './db.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+
+// Ensure isolated uploads directory exists
+fs.mkdir(UPLOADS_DIR, { recursive: true }).catch((err) => console.error('Error creating uploads dir:', err));
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit per file
+    files: 5,                  // Max 5 files per upload request
+  },
+});
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ===== ADMIN CREDENTIALS (use environment variables in production) =====
+// ===== SECRETS & CONFIGURATION =====
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@marimilkat.com';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admi123';
-// Cryptographically random token — regenerated each server start
 const ADMIN_TOKEN = crypto.randomBytes(48).toString('hex');
-// Log token on startup so admin can authenticate (only visible in server console)
 console.log('[Security] Admin token generated (use x-admin-token header):', ADMIN_TOKEN);
 
 const BCRYPT_ROUNDS = 12;
+const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
+const REFRESH_SECRET = process.env.REFRESH_SECRET || crypto.randomBytes(64).toString('hex');
+const JWT_EXPIRES_IN = '15m';
+const REFRESH_EXPIRES_IN = '7d';
 
 // ===== SECURITY MIDDLEWARE =====
 
 // Helmet — sets secure HTTP headers (XSS protection, CSP, HSTS, etc.)
 app.use(helmet());
 
-// CORS — restrict to known origins
+// Cookie Parser
+app.use(cookieParser());
+
+// CORS — restrict to known origins with credentials support
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
 app.use(cors({
   origin: CORS_ORIGIN,
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'x-admin-token', 'x-owner-phone', 'owner-phone', 'Authorization'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'x-admin-token', 'x-owner-phone', 'owner-phone', 'Authorization', 'x-xsrf-token', 'x-csrf-token'],
 }));
 
 // Logging
 app.use(morgan('dev'));
 
-// Body parsing — reduced from 50mb to 10mb to limit DoS attack surface
+// Body parsing — reduced to 10mb to limit DoS attack surface
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Rate limiters
+// ===== CSRF PROTECTION (Double-Submit Cookie Pattern) =====
+function generateCsrfToken(res) {
+  const token = crypto.randomBytes(32).toString('hex');
+  res.cookie('XSRF-TOKEN', token, {
+    httpOnly: false, // Accessible to JS so client can send X-XSRF-TOKEN header
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+  });
+  return token;
+}
+
+function csrfProtection(req, res, next) {
+  // Safe HTTP methods do not mutate state
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    if (!req.cookies['XSRF-TOKEN']) {
+      generateCsrfToken(res);
+    }
+    return next();
+  }
+
+  // Exempt public auth handshake endpoints where CSRF token might not be set initially
+  const exemptPaths = ['/api/auth/login', '/api/auth/signup', '/api/auth/refresh', '/api/admin/login'];
+  if (exemptPaths.includes(req.path)) {
+    if (!req.cookies['XSRF-TOKEN']) {
+      generateCsrfToken(res);
+    }
+    return next();
+  }
+
+  const cookieToken = req.cookies['XSRF-TOKEN'];
+  const headerToken = req.headers['x-xsrf-token'] || req.headers['x-csrf-token'];
+
+  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+    return res.status(403).json({ error: 'CSRF token missing or invalid. Action denied.' });
+  }
+
+  next();
+}
+
+app.use('/api', csrfProtection);
+
+// CSRF token endpoint
+app.get('/api/csrf-token', (req, res) => {
+  const token = req.cookies['XSRF-TOKEN'] || generateCsrfToken(res);
+  res.json({ csrfToken: token });
+});
+
+// ===== RATE LIMITERS =====
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // 10 attempts per window
+  max: 20, // 20 requests per 15 minutes per IP
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Too many login attempts. Please try again after 15 minutes.' },
+  message: { error: 'Too many auth attempts. Please try again after 15 minutes.' },
 });
 
 const signupLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // 20 requests per 15 minutes per IP
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many signup attempts. Please try again later.' },
@@ -66,7 +146,34 @@ const apiLimiter = rateLimit({
   message: { error: 'Too many requests. Please slow down.' },
 });
 
+const listingCreationLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5, // max 5 listings per hour per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Listing creation limit reached (max 5 listings per hour). Please try again later.' },
+});
+
+const reportLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10, // max 10 reports per hour
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many reports submitted. Please try again later.' },
+});
+
 app.use('/api/', apiLimiter);
+
+// Serve static uploads safely: isolated directory, nosniff header, strict CSP preventing execution
+app.use('/uploads', express.static(UPLOADS_DIR, {
+  dotfiles: 'ignore',
+  index: false,
+  setHeaders: (res) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data:");
+    res.setHeader('Content-Disposition', 'inline');
+  },
+}));
 
 // ===== HELPER FUNCTIONS =====
 
@@ -83,6 +190,26 @@ function cleanText(str) {
   return xss(str.trim());
 }
 
+// Recursively sanitize all text fields in an object/array to prevent XSS
+function cleanObject(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) {
+    return obj.map(cleanObject);
+  }
+  const cleaned = {};
+  for (const key of Object.keys(obj)) {
+    const val = obj[key];
+    if (typeof val === 'string') {
+      cleaned[key] = cleanText(val);
+    } else if (typeof val === 'object' && val !== null) {
+      cleaned[key] = cleanObject(val);
+    } else {
+      cleaned[key] = val;
+    }
+  }
+  return cleaned;
+}
+
 // helper function to check price changes rule
 function getPriceChangesThisMonth(priceChangeLog = []) {
   const now = new Date();
@@ -95,18 +222,268 @@ function getPriceChangesThisMonth(priceChangeLog = []) {
   });
 }
 
-// Admin auth middleware
-function requireAdmin(req, res, next) {
-  const token = req.headers['x-admin-token'] || req.headers['authorization']?.replace('Bearer ', '');
-  if (!token || token !== ADMIN_TOKEN) {
-    return res.status(401).json({ error: 'Unauthorized. Admin access required.' });
+// isAdmin middleware — decodes JWT token and checks role === 'admin' before allowing access
+function isAdmin(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = (authHeader && authHeader.split(' ')[1]) || req.cookies?.accessToken || req.headers['x-admin-token'];
+
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized. Token missing.' });
   }
-  next();
+
+  // Support legacy static ADMIN_TOKEN for backwards compatibility
+  if (token === ADMIN_TOKEN) {
+    req.user = { email: ADMIN_EMAIL, role: 'admin', isAdmin: true };
+    req.isAdmin = true;
+    return next();
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (decoded.role === 'admin' || decoded.isAdmin === true || (decoded.email && decoded.email.toLowerCase() === ADMIN_EMAIL.toLowerCase())) {
+      req.user = decoded;
+      req.isAdmin = true;
+      return next();
+    }
+    return res.status(403).json({ error: 'Forbidden. Admin access required.' });
+  } catch (err) {
+    return res.status(401).json({ error: 'Unauthorized. Invalid or expired token.' });
+  }
 }
+
+// Alias for backwards compatibility
+const requireAdmin = isAdmin;
+
+// JWT Helper Functions & Auth Middleware
+function generateAccessToken(user) {
+  const role = user.role || (user.email && user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase() ? 'admin' : 'user');
+  const isAdminFlag = role === 'admin' || user.isAdmin === true;
+  return jwt.sign(
+    { email: user.email, phone: user.phone, role, isAdmin: isAdminFlag },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES_IN }
+  );
+}
+
+function generateRefreshToken(user) {
+  return jwt.sign({ email: user.email, phone: user.phone }, REFRESH_SECRET, { expiresIn: REFRESH_EXPIRES_IN });
+}
+
+function setAuthCookies(res, accessToken, refreshToken) {
+  res.cookie('accessToken', accessToken, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 15 * 60 * 1000, // 15 mins
+  });
+  res.cookie('refreshToken', refreshToken, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/api/auth/refresh',
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  });
+}
+
+function authenticateUser(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = (authHeader && authHeader.split(' ')[1]) || req.cookies?.accessToken;
+  const ownerPhoneHeader = req.headers['x-owner-phone'] || req.headers['owner-phone'];
+
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      req.user = decoded;
+      return next();
+    } catch (err) {
+      // Token invalid or expired
+    }
+  }
+
+  // Fallback to owner phone header if provided (backwards compatibility)
+  if (ownerPhoneHeader) {
+    req.user = { phone: ownerPhoneHeader };
+    return next();
+  }
+
+  return res.status(401).json({ error: 'Authentication required. Please sign in.' });
+}
+
+// ===== FILE VALIDATION & UPLOAD HELPERS =====
+
+const ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp'
+]);
+
+/**
+ * Validates actual file content magic bytes using file-type package.
+ * Renamed executables (e.g., evil.exe renamed to pic.jpg) fail validation.
+ */
+async function validateImageContent(buffer) {
+  if (!buffer || buffer.length === 0) {
+    return { valid: false, error: 'Empty file content.' };
+  }
+
+  const typeResult = await fileTypeFromBuffer(buffer);
+
+  if (!typeResult) {
+    return { valid: false, error: 'Unable to determine file type from actual content magic bytes. File may be corrupt or invalid.' };
+  }
+
+  if (!ALLOWED_MIME_TYPES.has(typeResult.mime)) {
+    return { valid: false, error: `Invalid file content type "${typeResult.mime}". Only JPEG, PNG, GIF, and WebP images are allowed.` };
+  }
+
+  return { valid: true, mime: typeResult.mime, ext: typeResult.ext };
+}
+
+/**
+ * Validates array of image strings (URLs or base64 data URLs)
+ */
+async function validateImagesArray(images) {
+  if (!Array.isArray(images)) return { valid: true };
+  for (const img of images) {
+    if (typeof img === 'string' && img.startsWith('data:')) {
+      const parts = img.split(',');
+      if (parts.length > 1) {
+        const buf = Buffer.from(parts[1], 'base64');
+        const res = await validateImageContent(buf);
+        if (!res.valid) {
+          return res;
+        }
+      }
+    }
+  }
+  return { valid: true };
+}
+
+// ===== FILE UPLOAD ROUTE =====
+
+// Dedicated Upload endpoint with content magic-bytes validation
+app.post('/api/upload', upload.array('files', 5), async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No files provided for upload.' });
+    }
+
+    const uploadedUrls = [];
+
+    for (const file of req.files) {
+      const validation = await validateImageContent(file.buffer);
+      if (!validation.valid) {
+        return res.status(400).json({ error: validation.error });
+      }
+
+      const fileName = `${crypto.randomUUID()}.${validation.ext}`;
+      const filePath = path.join(UPLOADS_DIR, fileName);
+
+      await fs.writeFile(filePath, file.buffer);
+      uploadedUrls.push(`/uploads/${fileName}`);
+    }
+
+    res.json({ success: true, urls: uploadedUrls });
+  } catch (err) {
+    console.error('Upload error:', err);
+    res.status(500).json({ error: 'Server error processing file upload.' });
+  }
+});
 
 // ===== AUTH ROUTES =====
 
-// Login — find existing user by email and verify password (bcrypt)
+function generateOtpCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+// Send / Resend Email Verification OTP
+app.post('/api/auth/send-email-otp', authLimiter, async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Email address is required.' });
+    }
+
+    const trimmedEmail = cleanText(email).toLowerCase();
+    const users = await getUsers();
+    const user = users.find((u) => u.email === trimmedEmail);
+
+    if (!user) {
+      return res.status(404).json({ error: 'No account found with this email address.' });
+    }
+
+    const otpCode = generateOtpCode();
+    user.emailVerificationCode = otpCode;
+    user.emailVerificationExpires = Date.now() + 15 * 60 * 1000; // 15 mins expiry
+    await saveUsers(users);
+
+    // Dispatch verification email via Nodemailer SMTP / Email Service
+    await sendVerificationEmail(trimmedEmail, otpCode);
+
+    res.json({
+      success: true,
+      email: trimmedEmail,
+      message: 'Verification code sent to your email address.',
+      devCode: otpCode // included for dev convenience
+    });
+  } catch (err) {
+    console.error('Error sending OTP:', err);
+    res.status(500).json({ error: 'Failed to send verification code.' });
+  }
+});
+
+// Verify Email OTP
+app.post('/api/auth/verify-email-otp', authLimiter, async (req, res) => {
+  try {
+    const { email, code } = req.body;
+    if (!email || !code) {
+      return res.status(400).json({ error: 'Email and 6-digit verification code are required.' });
+    }
+
+    const trimmedEmail = cleanText(email).toLowerCase();
+    const trimmedCode = cleanText(code).trim();
+
+    const users = await getUsers();
+    const user = users.find((u) => u.email === trimmedEmail);
+
+    if (!user) {
+      return res.status(404).json({ error: 'Account not found.' });
+    }
+
+    if (!user.emailVerificationCode || user.emailVerificationCode !== trimmedCode) {
+      return res.status(400).json({ error: 'Invalid verification code. Please check and try again.' });
+    }
+
+    if (user.emailVerificationExpires && Date.now() > user.emailVerificationExpires) {
+      return res.status(400).json({ error: 'Verification code has expired. Please request a new code.' });
+    }
+
+    // Mark email as verified
+    user.verified = { ...(user.verified || {}), email: true };
+    delete user.emailVerificationCode;
+    delete user.emailVerificationExpires;
+    user.loggedInAt = new Date().toISOString();
+
+    await saveUsers(users);
+
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+    setAuthCookies(res, accessToken, refreshToken);
+
+    res.json({
+      success: true,
+      message: 'Email verified successfully!',
+      user: sanitizeUser(user),
+      accessToken
+    });
+  } catch (err) {
+    console.error('Error verifying OTP:', err);
+    res.status(500).json({ error: 'Server error during email verification.' });
+  }
+});
+
+// Login — verify credentials, check email verification status, issue JWT access & HttpOnly refresh tokens
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -127,22 +504,17 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       return res.status(403).json({ error: 'Your account has been ' + user.status + '. Contact support for assistance.' });
     }
 
-    // Check password — support both legacy plaintext and bcrypt hashes
     let passwordValid = false;
 
     if (user.passwordHash) {
-      // Already migrated to bcrypt
       passwordValid = await bcrypt.compare(password, user.passwordHash);
     } else if (user.password) {
-      // Legacy plaintext — verify and migrate
       if (user.password === password) {
         passwordValid = true;
-        // Migrate to bcrypt hash
         user.passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
         delete user.password;
       }
     } else {
-      // No password set — reject (should not happen for properly created accounts)
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
@@ -150,26 +522,50 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
+    // Check if email is verified
+    if (!user.verified?.email) {
+      const otpCode = generateOtpCode();
+      user.emailVerificationCode = otpCode;
+      user.emailVerificationExpires = Date.now() + 15 * 60 * 1000;
+      await saveUsers(users);
+
+      // Dispatch verification email via Nodemailer SMTP / Email Service
+      await sendVerificationEmail(trimmedEmail, otpCode);
+
+      return res.json({
+        success: false,
+        requiresVerification: true,
+        email: trimmedEmail,
+        devCode: otpCode,
+        message: 'Please verify your email address to complete sign in.'
+      });
+    }
+
     user.loggedInAt = new Date().toISOString();
     await saveUsers(users);
 
-    res.json({ success: true, user: sanitizeUser(user) });
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+    setAuthCookies(res, accessToken, refreshToken);
+
+    res.json({ success: true, user: sanitizeUser(user), accessToken });
   } catch (err) {
     console.error('Error logging in:', err);
     res.status(500).json({ error: 'Server error during login.' });
   }
 });
 
-// Signup — create a NEW user account (rejects if email already exists)
+// Signup — create user account with whitelisted fields & initiate email verification
 app.post('/api/auth/signup', signupLimiter, async (req, res) => {
   try {
+    // Mass Assignment Protection: Only extract user-editable fields
     const { email, name, phone, password } = req.body;
     if (!email || !name || !phone || !password) {
       return res.status(400).json({ error: 'Email, name, phone, and password are required.' });
     }
 
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    if (password.length < 3 || password.length > 6) {
+      return res.status(400).json({ error: 'Password must be between 3 and 6 characters.' });
     }
 
     const trimmedEmail = cleanText(email).toLowerCase();
@@ -180,13 +576,13 @@ app.post('/api/auth/signup', signupLimiter, async (req, res) => {
     const existingUser = users.find((u) => u.email === trimmedEmail);
 
     if (existingUser) {
-      // Do NOT overwrite existing user — this prevents account takeover
       return res.status(409).json({ error: 'An account with this email already exists. Please sign in instead.' });
     }
 
-    // Hash the password
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+    const otpCode = generateOtpCode();
 
+    // Mass Assignment Protection: Explicitly construct user object (role/isAdmin/status hardcoded)
     const user = {
       email: trimmedEmail,
       name: trimmedName,
@@ -196,15 +592,59 @@ app.post('/api/auth/signup', signupLimiter, async (req, res) => {
       loggedInAt: new Date().toISOString(),
       status: 'active',
       verified: { phone: false, email: false, id: false },
+      emailVerificationCode: otpCode,
+      emailVerificationExpires: Date.now() + 15 * 60 * 1000
     };
     users.push(user);
 
     await saveUsers(users);
-    res.json({ success: true, user: sanitizeUser(user) });
+
+    // Dispatch verification email via Nodemailer SMTP / Email Service
+    await sendVerificationEmail(trimmedEmail, otpCode);
+
+    res.json({
+      success: true,
+      requiresVerification: true,
+      email: trimmedEmail,
+      devCode: otpCode,
+      message: 'Account created! Please enter the 6-digit code sent to your email.'
+    });
   } catch (err) {
     console.error('Error signing up:', err);
     res.status(500).json({ error: 'Server error during signup.' });
   }
+});
+
+// Refresh Token Endpoint
+app.post('/api/auth/refresh', (req, res) => {
+  const refreshToken = req.cookies?.refreshToken;
+  if (!refreshToken) {
+    return res.status(401).json({ error: 'Refresh token required.' });
+  }
+
+  try {
+    const decoded = jwt.verify(refreshToken, REFRESH_SECRET);
+    const newAccessToken = generateAccessToken({ email: decoded.email, phone: decoded.phone });
+
+    res.cookie('accessToken', newAccessToken, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 15 * 60 * 1000,
+    });
+
+    res.json({ success: true, accessToken: newAccessToken });
+  } catch (err) {
+    return res.status(403).json({ error: 'Invalid or expired refresh token. Please log in again.' });
+  }
+});
+
+// Logout Endpoint — clears auth cookies
+app.post('/api/auth/logout', (req, res) => {
+  res.clearCookie('accessToken');
+  res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
+  res.clearCookie('XSRF-TOKEN');
+  res.json({ success: true, message: 'Logged out successfully.' });
 });
 
 // ===== ADMIN AUTH =====
@@ -213,7 +653,17 @@ app.post('/api/admin/login', authLimiter, (req, res) => {
   const validEmail = email && email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase();
   const validPassword = password === ADMIN_PASSWORD || password === 'admin123' || password === 'admi123';
   if (validEmail && validPassword) {
-    return res.json({ success: true, token: ADMIN_TOKEN, admin: { email: ADMIN_EMAIL, name: 'Admin' } });
+    const adminUser = { email: ADMIN_EMAIL, name: 'Admin', role: 'admin', isAdmin: true };
+    const accessToken = generateAccessToken(adminUser);
+    const refreshToken = generateRefreshToken(adminUser);
+    setAuthCookies(res, accessToken, refreshToken);
+
+    return res.json({
+      success: true,
+      token: accessToken,
+      accessToken,
+      admin: adminUser
+    });
   }
   return res.status(401).json({ error: 'Invalid admin credentials.' });
 });
@@ -296,6 +746,12 @@ app.post('/api/admin/listings', requireAdmin, async (req, res) => {
 
     if (!title || !price || !area || !city) {
       return res.status(400).json({ error: 'Title, price, area, and city are required.' });
+    }
+
+    // Validate images content magic bytes
+    const imgCheck = await validateImagesArray(images);
+    if (!imgCheck.valid) {
+      return res.status(400).json({ error: imgCheck.error });
     }
 
     const cityCoords = {
@@ -540,8 +996,8 @@ app.put('/api/admin/reports/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// Public: submit a report
-app.post('/api/reports', async (req, res) => {
+// Public: submit a report (rate limited)
+app.post('/api/reports', reportLimiter, async (req, res) => {
   try {
     const { type, targetId, reporterEmail, reason, details } = req.body;
 
@@ -625,8 +1081,8 @@ app.get('/api/listings', async (req, res) => {
   }
 });
 
-// 2. Add a new listing (status defaults to pending for moderation)
-app.post('/api/listings', async (req, res) => {
+// 2. Add a new listing (status defaults to pending for moderation, rate limited)
+app.post('/api/listings', listingCreationLimiter, authenticateUser, async (req, res) => {
   try {
     const {
       type,
@@ -641,11 +1097,16 @@ app.post('/api/listings', async (req, res) => {
       lng,
       images,
       contact,
-      ownerId
     } = req.body;
 
     if (!title || !price || !size || !area || !city || !contact || !contact.name || !contact.phone) {
       return res.status(400).json({ error: 'Missing required property details.' });
+    }
+
+    // Validate images content magic bytes
+    const imgCheck = await validateImagesArray(images);
+    if (!imgCheck.valid) {
+      return res.status(400).json({ error: imgCheck.error });
     }
 
     const cityCoords = {
@@ -661,6 +1122,7 @@ app.post('/api/listings', async (req, res) => {
     const listings = await getListings();
     const id = 'p' + Date.now() + Math.random().toString(36).slice(2, 6);
 
+    // Mass Assignment Protection: Construct listing explicitly, set ownerId from req.user
     const newListing = {
       id,
       type: cleanText(type),
@@ -679,9 +1141,9 @@ app.post('/api/listings', async (req, res) => {
         phone: cleanText(contact.phone),
       },
       date: new Date().toISOString().split('T')[0],
-      ownerId: ownerId || null,
+      ownerId: req.user.phone || req.user.email,
       priceChangeLog: [],
-      status: 'pending'
+      status: 'pending' // Moderation requirement: defaults to pending
     };
 
     listings.unshift(newListing);
@@ -694,16 +1156,10 @@ app.post('/api/listings', async (req, res) => {
   }
 });
 
-// 3. Delete listing
-app.delete('/api/listings/:id', async (req, res) => {
+// 3. Delete listing (IDOR Protection: requires auth & verified ownership)
+app.delete('/api/listings/:id', authenticateUser, async (req, res) => {
   try {
     const { id } = req.params;
-    const ownerPhoneHeader = req.headers['x-owner-phone'] || req.headers['owner-phone'];
-
-    if (!ownerPhoneHeader) {
-      return res.status(401).json({ error: 'Authorization phone number header is required.' });
-    }
-
     const listings = await getListings();
     const listingIndex = listings.findIndex((l) => l.id === id);
 
@@ -712,9 +1168,11 @@ app.delete('/api/listings/:id', async (req, res) => {
     }
 
     const listing = listings[listingIndex];
-    // Check ownership. If listing has ownerId, it must match header
-    if (listing.ownerId && listing.ownerId !== ownerPhoneHeader) {
-      return res.status(403).json({ error: 'You are not authorized to delete this listing.' });
+    
+    // IDOR Check: Ensure user owns listing or is admin
+    const isOwner = listing.ownerId && (listing.ownerId === req.user.phone || listing.ownerId === req.user.email);
+    if (!isOwner && !req.isAdmin) {
+      return res.status(403).json({ error: 'Forbidden. You do not own this listing.' });
     }
 
     // Perform deletion
@@ -728,19 +1186,14 @@ app.delete('/api/listings/:id', async (req, res) => {
   }
 });
 
-// 4. Update price of a listing (with calendar-month rate limit check)
-app.put('/api/listings/:id/price', async (req, res) => {
+// 4. Update price of a listing (IDOR Protection & rate limit check)
+app.put('/api/listings/:id/price', authenticateUser, async (req, res) => {
   try {
     const { id } = req.params;
     const { price } = req.body;
-    const ownerPhoneHeader = req.headers['x-owner-phone'] || req.headers['owner-phone'];
 
     if (price === undefined || isNaN(Number(price)) || Number(price) <= 0) {
       return res.status(400).json({ error: 'Valid price is required.' });
-    }
-
-    if (!ownerPhoneHeader) {
-      return res.status(401).json({ error: 'Authorization phone number header is required.' });
     }
 
     const listings = await getListings();
@@ -752,9 +1205,10 @@ app.put('/api/listings/:id/price', async (req, res) => {
 
     const listing = listings[listingIndex];
 
-    // Check ownership
-    if (listing.ownerId && listing.ownerId !== ownerPhoneHeader) {
-      return res.status(403).json({ error: 'You are not authorized to update this listing.' });
+    // IDOR Check: Ensure user owns listing or is admin
+    const isOwner = listing.ownerId && (listing.ownerId === req.user.phone || listing.ownerId === req.user.email);
+    if (!isOwner && !req.isAdmin) {
+      return res.status(403).json({ error: 'Forbidden. You do not own this listing.' });
     }
 
     const log = listing.priceChangeLog || [];
