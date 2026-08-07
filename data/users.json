@@ -67,10 +67,10 @@
     }
   },
   {
-    "email": "admin@marimilkat.com",
+    "email": "marimilkatadmin@gmail.com",
     "name": "Admin",
     "phone": "",
-    "passwordHash": "$2b$12$.EwWM6juaOapJS4Z4uYnau5YRrjtlJjKaPe81WiA5T6F9ZAwI1/aq",
+    "passwordHash": "$2b$12$FtrXhxv7MDbz4VWnWhjJ2OpheBm6q.ZVpKBEscXYFRJ6b7EHm8CCm",
     "role": "admin",
     "createdAt": "2026-07-28T07:45:35.006Z",
     "loggedInAt": "2026-07-28T07:45:35.007Z",
@@ -124,5 +124,21 @@
     },
     "emailVerificationCode": "782944",
     "emailVerificationExpires": 1785577068904
+  },
+  {
+    "email": "ghodadrakeyur34@gmail.com",
+    "name": "keyur",
+    "phone": "+916353467756",
+    "passwordHash": "$2b$12$f4bx2T232uXfjy3oWr5PPu0UwjvGaFHCKcmHKFGiIt2PBqAfW.kEq",
+    "createdAt": "2026-08-07T05:07:29.556Z",
+    "loggedInAt": "2026-08-07T05:07:29.556Z",
+    "status": "active",
+    "verified": {
+      "phone": false,
+      "email": false,
+      "id": false
+    },
+    "emailVerificationCode": "993733",
+    "emailVerificationExpires": 1786080184869
   }
 ]

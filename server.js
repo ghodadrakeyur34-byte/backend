@@ -17,7 +17,7 @@ import { fileTypeFromBuffer } from 'file-type';
 import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
 import { sendVerificationEmail } from './emailService.js';
-import { getListings, saveListings, getUsers, saveUsers, getReports, saveReports, getCategories, saveCategories, getSettings, saveSettings } from './db.js';
+import { getListings, saveListings, getUsers, saveUsers, getReports, saveReports, getCategories, saveCategories, getSettings, saveSettings, getInquiries, saveInquiries } from './db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,8 +38,8 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // ===== SECRETS & CONFIGURATION =====
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@marimilkat.com';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admi123';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'marimilkatadmin@gmail.com';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin@MariMilkat';
 const ADMIN_TOKEN = crypto.randomBytes(48).toString('hex');
 console.log('[Security] Admin token generated (use x-admin-token header):', ADMIN_TOKEN);
 
@@ -492,6 +492,23 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     }
 
     const trimmedEmail = cleanText(email).toLowerCase();
+
+    // Admin login intercept
+    if (trimmedEmail === ADMIN_EMAIL.toLowerCase() && (password === ADMIN_PASSWORD || password === '@dmin@Milkat' || password === 'Admin@MariMilkat')) {
+      const adminUser = { email: ADMIN_EMAIL, name: 'Admin', role: 'admin', isAdmin: true };
+      const accessToken = generateAccessToken(adminUser);
+      const refreshToken = generateRefreshToken(adminUser);
+      setAuthCookies(res, accessToken, refreshToken);
+      return res.json({
+        success: true,
+        isAdminLogin: true,
+        user: adminUser,
+        admin: adminUser,
+        token: accessToken,
+        accessToken
+      });
+    }
+
     const users = await getUsers();
     const user = users.find((u) => u.email === trimmedEmail);
 
@@ -564,8 +581,8 @@ app.post('/api/auth/signup', signupLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Email, name, phone, and password are required.' });
     }
 
-    if (password.length < 3 || password.length > 6) {
-      return res.status(400).json({ error: 'Password must be between 3 and 6 characters.' });
+    if (password.length < 6 || password.length > 12) {
+      return res.status(400).json({ error: 'Password must be between 6 and 12 characters.' });
     }
 
     const trimmedEmail = cleanText(email).toLowerCase();
@@ -651,7 +668,7 @@ app.post('/api/auth/logout', (req, res) => {
 app.post('/api/admin/login', authLimiter, (req, res) => {
   const { email, password } = req.body;
   const validEmail = email && email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase();
-  const validPassword = password === ADMIN_PASSWORD || password === 'admin123' || password === 'admi123';
+  const validPassword = password === ADMIN_PASSWORD || password === '@dmin@Milkat' || password === 'Admin@MariMilkat';
   if (validEmail && validPassword) {
     const adminUser = { email: ADMIN_EMAIL, name: 'Admin', role: 'admin', isAdmin: true };
     const accessToken = generateAccessToken(adminUser);
@@ -1271,7 +1288,99 @@ app.put('/api/settings', requireAdmin, async (req, res) => {
   }
 });
 
+// ===== HELP DESK INQUIRIES API =====
+
+// POST /api/inquiries — submit written inquiry from Help Desk page
+app.post('/api/inquiries', async (req, res) => {
+  try {
+    const { name, phone, email, message } = req.body;
+    if (!name || !phone || !message) {
+      return res.status(400).json({ error: 'Name, phone, and message are required.' });
+    }
+
+    const cleanName = cleanText(name);
+    const cleanPhone = cleanText(phone);
+    const cleanEmail = email ? cleanText(email) : '';
+    const cleanMsg = cleanText(message);
+
+    const inquiries = await getInquiries();
+    const newInquiry = {
+      id: 'inq_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      name: cleanName,
+      phone: cleanPhone,
+      email: cleanEmail,
+      message: cleanMsg,
+      date: new Date().toISOString(),
+      status: 'pending' // 'pending' | 'resolved'
+    };
+
+    inquiries.unshift(newInquiry);
+    await saveInquiries(inquiries);
+
+    res.json({ success: true, message: 'Your inquiry has been submitted successfully.', inquiry: newInquiry });
+  } catch (err) {
+    console.error('Error submitting inquiry:', err);
+    res.status(500).json({ error: 'Server error submitting inquiry.' });
+  }
+});
+
+// GET /api/admin/inquiries — fetch all inquiries for Admin Panel
+app.get('/api/admin/inquiries', requireAdmin, async (req, res) => {
+  try {
+    const inquiries = await getInquiries();
+    res.json(inquiries);
+  } catch (err) {
+    console.error('Error fetching admin inquiries:', err);
+    res.status(500).json({ error: 'Server error fetching inquiries.' });
+  }
+});
+
+// PUT /api/admin/inquiries/:id/status — update inquiry status or note
+app.put('/api/admin/inquiries/:id/status', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, adminNote } = req.body;
+    const inquiries = await getInquiries();
+    const inquiry = inquiries.find((i) => i.id === id);
+
+    if (!inquiry) {
+      return res.status(404).json({ error: 'Inquiry not found.' });
+    }
+
+    if (status) inquiry.status = status;
+    if (adminNote !== undefined) inquiry.adminNote = cleanText(adminNote);
+    inquiry.updatedAt = new Date().toISOString();
+
+    await saveInquiries(inquiries);
+    res.json({ success: true, inquiry });
+  } catch (err) {
+    console.error('Error updating inquiry status:', err);
+    res.status(500).json({ error: 'Server error updating inquiry status.' });
+  }
+});
+
+// DELETE /api/admin/inquiries/:id — delete inquiry
+app.delete('/api/admin/inquiries/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    let inquiries = await getInquiries();
+    const initialLen = inquiries.length;
+    inquiries = inquiries.filter((i) => i.id !== id);
+
+    if (inquiries.length === initialLen) {
+      return res.status(404).json({ error: 'Inquiry not found.' });
+    }
+
+    await saveInquiries(inquiries);
+    res.json({ success: true, message: 'Inquiry deleted successfully.' });
+  } catch (err) {
+    console.error('Error deleting inquiry:', err);
+    res.status(500).json({ error: 'Server error deleting inquiry.' });
+  }
+});
+
 // Start Server
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
 });
+
