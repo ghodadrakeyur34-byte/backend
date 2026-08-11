@@ -1000,6 +1000,52 @@ app.get('/api/admin/users/:email', requireAdmin, async (req, res) => {
   }
 });
 
+// DELETE /api/admin/users/:email — Permanently remove user and purge all their listings/inquiries/reports
+app.delete('/api/admin/users/:email', requireAdmin, async (req, res) => {
+  try {
+    const { email } = req.params;
+    const targetEmail = decodeURIComponent(email).toLowerCase();
+
+    let users = await getUsers();
+    const targetUser = users.find(u => u.email.toLowerCase() === targetEmail);
+
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    const userPhone = targetUser.phone;
+
+    // 1. Remove user from users database
+    users = users.filter(u => u.email.toLowerCase() !== targetEmail);
+    await saveUsers(users);
+
+    // 2. Remove all listings created by this user
+    let listings = await getListings();
+    const initialListingsCount = listings.length;
+    listings = listings.filter(l => l.ownerId !== userPhone && l.contact?.phone !== userPhone && l.ownerEmail !== targetEmail);
+    const deletedListingsCount = initialListingsCount - listings.length;
+    await saveListings(listings);
+
+    // 3. Remove all inquiries submitted by or sent to this user
+    let inquiries = await getInquiries();
+    inquiries = inquiries.filter(i => i.email !== targetEmail && i.phone !== userPhone);
+    await saveInquiries(inquiries);
+
+    // 4. Remove all reports associated with this user
+    let reports = await getReports();
+    reports = reports.filter(r => r.reporterEmail !== targetEmail && r.targetEmail !== targetEmail);
+    await saveReports(reports);
+
+    res.json({
+      success: true,
+      message: `User ${targetEmail} and ${deletedListingsCount} listing(s) permanently removed.`
+    });
+  } catch (err) {
+    console.error('Error deleting user:', err);
+    res.status(500).json({ error: 'Server error deleting user.' });
+  }
+});
+
 // ===== ADMIN REPORTS =====
 app.get('/api/admin/reports', requireAdmin, async (req, res) => {
   try {
