@@ -1379,8 +1379,13 @@ app.delete('/api/admin/inquiries/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// Start Server
-app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
-});
+// Start Server (only if not imported as Cloud Function module)
+if (!process.env.K_SERVICE && !process.env.FIREBASE_CONFIG) {
+  app.listen(PORT, () => {
+    console.log(`Server is running on http://localhost:${PORT}`);
+  });
+}
+
+export { app };
+
 
