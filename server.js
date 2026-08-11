@@ -451,8 +451,7 @@ app.post('/api/auth/send-email-otp', authLimiter, async (req, res) => {
     res.json({
       success: true,
       email: trimmedEmail,
-      message: 'Verification code sent to your email address.',
-      devCode: otpCode // included for dev convenience
+      message: 'Verification code sent to your email address.'
     });
   } catch (err) {
     console.error('Error sending OTP:', err);
@@ -583,7 +582,6 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         success: false,
         requiresVerification: true,
         email: trimmedEmail,
-        devCode: otpCode,
         message: 'Please verify your email address to complete sign in.'
       });
     }
@@ -653,7 +651,6 @@ app.post('/api/auth/signup', signupLimiter, async (req, res) => {
       success: true,
       requiresVerification: true,
       email: trimmedEmail,
-      devCode: otpCode,
       message: 'Account created! Please enter the 6-digit code sent to your email.'
     });
   } catch (err) {

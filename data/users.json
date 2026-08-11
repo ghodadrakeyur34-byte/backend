@@ -1,72 +1,5 @@
 [
   {
-    "email": "test@example.com",
-    "name": "Test Seller",
-    "phone": "0399-9999999",
-    "createdAt": "2026-07-04T15:16:37.445Z",
-    "loggedInAt": "2026-07-06T16:02:50.362Z",
-    "verified": {
-      "phone": false,
-      "email": false
-    },
-    "status": "active",
-    "statusChangedAt": "2026-07-24T16:40:18.522Z"
-  },
-  {
-    "email": "newuser@test.com",
-    "name": "John Doe",
-    "phone": "0300-1234567",
-    "createdAt": "2026-07-06T05:00:36.940Z",
-    "loggedInAt": "2026-07-20T06:47:08.873Z"
-  },
-  {
-    "email": "test_auth@example.com",
-    "name": "Auth Tester",
-    "phone": "0311-9876543",
-    "createdAt": "2026-07-06T05:11:09.971Z",
-    "loggedInAt": "2026-07-06T05:12:18.042Z"
-  },
-  {
-    "email": "keyurghodadra34@gmail.com",
-    "name": "keyur ghodadra",
-    "phone": "9913494523",
-    "createdAt": "2026-07-06T05:17:53.109Z",
-    "loggedInAt": "2026-07-06T05:17:53.109Z",
-    "verified": {
-      "phone": false
-    }
-  },
-  {
-    "email": "vddsdvsvf@gmail.com",
-    "name": "keyur Keyur",
-    "phone": "+916353467756",
-    "password": "111111",
-    "createdAt": "2026-07-22T08:30:07.552Z",
-    "loggedInAt": "2026-07-22T08:30:07.552Z"
-  },
-  {
-    "email": "vdsvfghhfh@gmail.com",
-    "name": "keyur Keyur",
-    "phone": "+916353467756",
-    "password": "aaaaaa",
-    "createdAt": "2026-07-22T08:31:08.892Z",
-    "loggedInAt": "2026-07-22T08:31:40.913Z"
-  },
-  {
-    "email": "sectest@test.com",
-    "name": "Security Test",
-    "phone": "1234567890",
-    "passwordHash": "$2b$12$pVgdqGeaIfuIOLeMIWkw7epxBWSYELmN/Ts7mTrVaxubU2MlkmozO",
-    "createdAt": "2026-07-24T16:13:56.474Z",
-    "loggedInAt": "2026-07-24T16:13:56.474Z",
-    "status": "active",
-    "verified": {
-      "phone": false,
-      "email": false,
-      "id": false
-    }
-  },
-  {
     "email": "marimilkatadmin@gmail.com",
     "name": "Admin",
     "phone": "",
@@ -82,63 +15,19 @@
     }
   },
   {
-    "email": "verifytest2@example.com",
-    "name": "Verify Test",
-    "phone": "03001234568",
-    "passwordHash": "$2b$12$vL8HbDGb3C7XFQ2Tor8bFeGYibVAUs74OIXuJKtgsX5TQJLKbAZvu",
-    "createdAt": "2026-08-01T04:39:03.455Z",
-    "loggedInAt": "2026-08-01T04:39:08.126Z",
-    "status": "active",
-    "verified": {
-      "phone": false,
-      "email": true,
-      "id": false
-    }
-  },
-  {
     "email": "k73234987@gmail.com",
     "name": "keyur Keyur",
     "phone": "+916353467756",
-    "passwordHash": "$2b$12$opLOo1yidQI0kqH2epSCpeR7/DQbq2zp5EKQ6kbjR80NujyvEE0Me",
-    "createdAt": "2026-08-01T09:11:50.609Z",
-    "loggedInAt": "2026-08-01T09:12:57.627Z",
-    "status": "active",
-    "verified": {
-      "phone": false,
-      "email": true,
-      "id": false
-    }
-  },
-  {
-    "email": "maheksevara107@gmail.com",
-    "name": "mahek",
-    "phone": "+916353467756",
-    "passwordHash": "$2b$12$4MehxvQo0PVdqIYKpr9zK.eflOBwWBF7L8dvf2dlB2CSgr2ZujIcu",
-    "createdAt": "2026-08-01T09:22:48.904Z",
-    "loggedInAt": "2026-08-01T09:22:48.904Z",
+    "passwordHash": "$2b$10$NyhcyPxNvzFmRDHdufW1YOlHuAq6n6LfHd..msvY3QrT99mJNBfmu",
+    "createdAt": "2026-08-11T15:48:02.598Z",
+    "loggedInAt": "2026-08-11T15:48:02.598Z",
     "status": "active",
     "verified": {
       "phone": false,
       "email": false,
       "id": false
     },
-    "emailVerificationCode": "782944",
-    "emailVerificationExpires": 1785577068904
-  },
-  {
-    "email": "ghodadrakeyur34@gmail.com",
-    "name": "keyur",
-    "phone": "+916353467756",
-    "passwordHash": "$2b$12$f4bx2T232uXfjy3oWr5PPu0UwjvGaFHCKcmHKFGiIt2PBqAfW.kEq",
-    "createdAt": "2026-08-07T05:07:29.556Z",
-    "loggedInAt": "2026-08-07T05:07:29.556Z",
-    "status": "active",
-    "verified": {
-      "phone": false,
-      "email": false,
-      "id": false
-    },
-    "emailVerificationCode": "993733",
-    "emailVerificationExpires": 1786080184869
+    "emailVerificationCode": "432505",
+    "emailVerificationExpires": 1786464182598
   }
 ]
