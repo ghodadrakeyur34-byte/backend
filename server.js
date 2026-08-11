@@ -87,15 +87,16 @@ app.use(morgan('dev'));
 
 // Body parsing — reduced to 10mb to limit DoS attack surface
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+const isProduction = process.env.NODE_ENV === 'production' || Boolean(process.env.RENDER) || Boolean(process.env.K_SERVICE);
 
 // ===== CSRF PROTECTION (Double-Submit Cookie Pattern) =====
-function generateCsrfToken(res) {
+function generateCsrfToken(res, req) {
   const token = crypto.randomBytes(32).toString('hex');
+  const isSecure = isProduction || (req && (req.secure || req.headers['x-forwarded-proto'] === 'https'));
   res.cookie('XSRF-TOKEN', token, {
     httpOnly: false, // Accessible to JS so client can send X-XSRF-TOKEN header
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    sameSite: isSecure ? 'none' : 'lax',
+    secure: isSecure,
     path: '/',
   });
   return token;
@@ -105,16 +106,19 @@ function csrfProtection(req, res, next) {
   // Safe HTTP methods do not mutate state
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
     if (!req.cookies['XSRF-TOKEN']) {
-      generateCsrfToken(res);
+      generateCsrfToken(res, req);
     }
     return next();
   }
 
   // Exempt public auth handshake endpoints where CSRF token might not be set initially
-  const exemptPaths = ['/api/auth/login', '/api/auth/signup', '/api/auth/refresh', '/api/admin/login'];
-  if (exemptPaths.includes(req.path)) {
+  if (
+    req.path.startsWith('/api/auth/') ||
+    req.path.startsWith('/api/admin/login') ||
+    req.path === '/api/csrf-token'
+  ) {
     if (!req.cookies['XSRF-TOKEN']) {
-      generateCsrfToken(res);
+      generateCsrfToken(res, req);
     }
     return next();
   }
@@ -122,8 +126,13 @@ function csrfProtection(req, res, next) {
   const cookieToken = req.cookies['XSRF-TOKEN'];
   const headerToken = req.headers['x-xsrf-token'] || req.headers['x-csrf-token'];
 
-  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+  // If header token is provided, match against cookie if cookie exists
+  if (!headerToken) {
     return res.status(403).json({ error: 'CSRF token missing or invalid. Action denied.' });
+  }
+
+  if (cookieToken && headerToken !== cookieToken) {
+    return res.status(403).json({ error: 'CSRF token mismatch. Action denied.' });
   }
 
   next();
@@ -133,7 +142,7 @@ app.use('/api', csrfProtection);
 
 // CSRF token endpoint
 app.get('/api/csrf-token', (req, res) => {
-  const token = req.cookies['XSRF-TOKEN'] || generateCsrfToken(res);
+  const token = req.cookies['XSRF-TOKEN'] || generateCsrfToken(res, req);
   res.json({ csrfToken: token });
 });
 
@@ -285,17 +294,18 @@ function generateRefreshToken(user) {
   return jwt.sign({ email: user.email, phone: user.phone }, REFRESH_SECRET, { expiresIn: REFRESH_EXPIRES_IN });
 }
 
-function setAuthCookies(res, accessToken, refreshToken) {
+function setAuthCookies(res, accessToken, refreshToken, req) {
+  const isSecure = isProduction || (req && (req.secure || req.headers['x-forwarded-proto'] === 'https'));
   res.cookie('accessToken', accessToken, {
     httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    sameSite: isSecure ? 'none' : 'lax',
+    secure: isSecure,
     maxAge: 15 * 60 * 1000, // 15 mins
   });
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    sameSite: isSecure ? 'none' : 'lax',
+    secure: isSecure,
     path: '/api/auth/refresh',
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   });
