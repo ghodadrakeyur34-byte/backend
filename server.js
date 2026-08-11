@@ -112,10 +112,11 @@ function csrfProtection(req, res, next) {
   }
 
   // Exempt public auth handshake endpoints where CSRF token might not be set initially
+  const pathToCheck = req.originalUrl || req.path;
   if (
-    req.path.startsWith('/api/auth/') ||
-    req.path.startsWith('/api/admin/login') ||
-    req.path === '/api/csrf-token'
+    pathToCheck.includes('/auth/') ||
+    pathToCheck.includes('/admin/login') ||
+    pathToCheck.includes('/csrf-token')
   ) {
     if (!req.cookies['XSRF-TOKEN']) {
       generateCsrfToken(res, req);
