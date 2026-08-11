@@ -1484,12 +1484,10 @@ app.delete('/api/admin/inquiries/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// Start Server (only if not imported as Cloud Function module)
-if (!process.env.K_SERVICE && !process.env.FIREBASE_CONFIG) {
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server is running on 0.0.0.0:${PORT}`);
-  });
-}
+// Start Server
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server is running on 0.0.0.0:${PORT}`);
+});
 
 export { app };
 
