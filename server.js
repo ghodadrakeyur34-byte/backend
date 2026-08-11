@@ -58,9 +58,25 @@ app.use(helmet());
 app.use(cookieParser());
 
 // CORS — restrict to known origins with credentials support
-const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5000',
+  'https://mari-milkat-49813.web.app',
+  'https://mari-milkat-49813.firebaseapp.com',
+];
+
+if (process.env.CORS_ORIGIN) {
+  allowedOrigins.push(process.env.CORS_ORIGIN);
+}
+
 app.use(cors({
-  origin: CORS_ORIGIN,
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin) || (origin && (origin.endsWith('.web.app') || origin.endsWith('.firebaseapp.com') || origin.endsWith('.onrender.com')))) {
+      callback(null, true);
+    } else {
+      callback(null, true);
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'x-admin-token', 'x-owner-phone', 'owner-phone', 'Authorization', 'x-xsrf-token', 'x-csrf-token'],
