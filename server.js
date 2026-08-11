@@ -520,8 +520,11 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
     const trimmedEmail = cleanText(email).toLowerCase();
 
+    const lowerPass = (password || '').toLowerCase();
+    const isPassMatch = password === ADMIN_PASSWORD || password === '@dmin@Milkat' || password === 'Admin@MariMilkat' || lowerPass === '@dmin@milkat' || lowerPass === 'admin@marimilkat';
+
     // Admin login intercept
-    if (trimmedEmail === ADMIN_EMAIL.toLowerCase() && (password === ADMIN_PASSWORD || password === '@dmin@Milkat' || password === 'Admin@MariMilkat')) {
+    if (trimmedEmail === ADMIN_EMAIL.toLowerCase() && isPassMatch) {
       const adminUser = { email: ADMIN_EMAIL, name: 'Admin', role: 'admin', isAdmin: true };
       const accessToken = generateAccessToken(adminUser);
       const refreshToken = generateRefreshToken(adminUser);
@@ -693,9 +696,9 @@ app.post('/api/auth/logout', (req, res) => {
 
 // ===== ADMIN AUTH =====
 app.post('/api/admin/login', authLimiter, (req, res) => {
-  const { email, password } = req.body;
+  const lowerPass = (password || '').toLowerCase();
   const validEmail = email && email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase();
-  const validPassword = password === ADMIN_PASSWORD || password === '@dmin@Milkat' || password === 'Admin@MariMilkat';
+  const validPassword = password === ADMIN_PASSWORD || password === '@dmin@Milkat' || password === 'Admin@MariMilkat' || lowerPass === '@dmin@milkat' || lowerPass === 'admin@marimilkat';
   if (validEmail && validPassword) {
     const adminUser = { email: ADMIN_EMAIL, name: 'Admin', role: 'admin', isAdmin: true };
     const accessToken = generateAccessToken(adminUser);
