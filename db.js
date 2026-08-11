@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const isCloudFunctions = process.env.K_SERVICE || process.env.FUNCTIONS_EMULATOR || process.env.FIREBASE_CONFIG;
+const isCloudFunctions = process.env.RENDER || process.env.K_SERVICE || process.env.FUNCTIONS_EMULATOR || process.env.FIREBASE_CONFIG;
 const DATA_DIR = isCloudFunctions ? path.join('/tmp', 'data') : path.join(__dirname, 'data');
 const LISTINGS_FILE = path.join(DATA_DIR, 'listings.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
