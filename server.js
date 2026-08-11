@@ -696,6 +696,7 @@ app.post('/api/auth/logout', (req, res) => {
 
 // ===== ADMIN AUTH =====
 app.post('/api/admin/login', authLimiter, (req, res) => {
+  const { email, password } = req.body || {};
   const lowerPass = (password || '').toLowerCase();
   const validEmail = email && email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase();
   const validPassword = password === ADMIN_PASSWORD || password === '@dmin@Milkat' || password === 'Admin@MariMilkat' || lowerPass === '@dmin@milkat' || lowerPass === 'admin@marimilkat';
