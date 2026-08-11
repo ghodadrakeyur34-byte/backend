@@ -80,7 +80,7 @@ if (process.env.CORS_ORIGIN) {
 
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin) || (origin && (origin.endsWith('.web.app') || origin.endsWith('.firebaseapp.com') || origin.endsWith('.onrender.com')))) {
+    if (!origin || allowedOrigins.includes(origin) || (origin && (origin.endsWith('.web.app') || origin.endsWith('.firebaseapp.com') || origin.endsWith('.onrender.com') || origin.endsWith('.railway.app') || origin.endsWith('.up.railway.app')))) {
       callback(null, true);
     } else {
       callback(null, true);
