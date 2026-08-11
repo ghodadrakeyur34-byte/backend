@@ -7,7 +7,7 @@ import morgan from 'morgan';
 import crypto from 'crypto';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import xss from 'xss';
 import path from 'path';
 import fs from 'fs/promises';
@@ -43,7 +43,7 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin@MariMilkat';
 const ADMIN_TOKEN = crypto.randomBytes(48).toString('hex');
 console.log('[Security] Admin token generated (use x-admin-token header):', ADMIN_TOKEN);
 
-const BCRYPT_ROUNDS = 12;
+const BCRYPT_ROUNDS = 10;
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
 const REFRESH_SECRET = process.env.REFRESH_SECRET || crypto.randomBytes(64).toString('hex');
 const JWT_EXPIRES_IN = '15m';
