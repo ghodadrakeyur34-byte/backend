@@ -621,7 +621,29 @@ app.post('/api/auth/signup', signupLimiter, async (req, res) => {
     const existingUser = users.find((u) => u.email === trimmedEmail);
 
     if (existingUser) {
-      return res.status(409).json({ error: 'An account with this email already exists. Please sign in instead.' });
+      if (existingUser.verified?.email) {
+        return res.status(409).json({ error: 'An account with this email already exists. Please sign in instead.' });
+      }
+
+      // If user hasn't verified email yet, allow updating signup info & resending OTP email
+      const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+      const otpCode = generateOtpCode();
+
+      existingUser.name = trimmedName;
+      existingUser.phone = trimmedPhone;
+      existingUser.passwordHash = passwordHash;
+      existingUser.emailVerificationCode = otpCode;
+      existingUser.emailVerificationExpires = Date.now() + 15 * 60 * 1000;
+
+      await saveUsers(users);
+      await sendVerificationEmail(trimmedEmail, otpCode);
+
+      return res.json({
+        success: true,
+        requiresVerification: true,
+        email: trimmedEmail,
+        message: 'Verification code sent to your email address.'
+      });
     }
 
     const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
