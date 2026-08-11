@@ -54,6 +54,15 @@ const REFRESH_EXPIRES_IN = '7d';
 // Helmet — sets secure HTTP headers (XSS protection, CSP, HSTS, etc.)
 app.use(helmet());
 
+// Health Check Endpoints for Render Deployment
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', service: 'Mari Milkat Backend API' });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy' });
+});
+
 // Cookie Parser
 app.use(cookieParser());
 
