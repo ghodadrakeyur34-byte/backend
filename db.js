@@ -1,14 +1,38 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import admin from 'firebase-admin';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const isCloudFunctions = process.env.RENDER || process.env.K_SERVICE || process.env.FUNCTIONS_EMULATOR || process.env.FIREBASE_CONFIG;
+const isCloudFunctions = process.env.RENDER || process.env.NETLIFY || process.env.K_SERVICE || process.env.FUNCTIONS_EMULATOR || process.env.FIREBASE_CONFIG;
 const DATA_DIR = isCloudFunctions ? path.join('/tmp', 'data') : path.join(__dirname, 'data');
 const LISTINGS_FILE = path.join(DATA_DIR, 'listings.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const REPORTS_FILE = path.join(DATA_DIR, 'reports.json');
 const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const INQUIRIES_FILE = path.join(DATA_DIR, 'inquiries.json');
+
+// Initialize Firebase Admin Firestore
+let firestoreDb = null;
+try {
+  if (!admin.apps.length) {
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      const sa = typeof process.env.FIREBASE_SERVICE_ACCOUNT === 'string'
+        ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+        : process.env.FIREBASE_SERVICE_ACCOUNT;
+      admin.initializeApp({
+        credential: admin.credential.cert(sa),
+        projectId: sa.project_id || 'mari-milkat-49813',
+      });
+    } else {
+      admin.initializeApp({ projectId: 'mari-milkat-49813' });
+    }
+  }
+  firestoreDb = admin.firestore();
+} catch (err) {
+  console.warn('[Firestore] Initialization warning (falling back to JSON store):', err.message);
+}
 
 const SEED = [
   { id: 's1', type: 'house', title: '1,125 Sq. Ft. Double Storey House', desc: 'Beautiful double storey house with 3 bedrooms, 2 bathrooms, drawing room, TV lounge, kitchen, car porch. Marble flooring, good ventilation. Near park and mosque.', price: 12500000, size: 1125, unit: 'sqft', area: 'Somnath Road', city: 'Veraval', lat: 20.9082, lng: 70.3703, images: ['/assets/sample_house.png'], contact: { name: 'Ahmed Khan', phone: '0300-1234567' }, date: '2026-05-19', status: 'active' },
@@ -52,6 +76,12 @@ const CATEGORIES_SEED = {
   ]
 };
 
+const SETTINGS_SEED = {
+  helpMobile: '+91 98765 43210',
+  helpEmail: 'support@marimilkat.com',
+  helpHours: 'Mon - Sat: 9:00 AM - 8:00 PM',
+};
+
 class AtomicJSONStore {
   constructor(filePath, defaultData = []) {
     this.filePath = filePath;
@@ -68,7 +98,6 @@ class AtomicJSONStore {
           resolve(JSON.parse(content));
         } catch (err) {
           if (err.code === 'ENOENT') {
-            // Write defaults if file does not exist
             try {
               await fs.writeFile(this.filePath, JSON.stringify(this.defaultData, null, 2), 'utf8');
               resolve(this.defaultData);
@@ -100,14 +129,6 @@ class AtomicJSONStore {
   }
 }
 
-const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
-const INQUIRIES_FILE = path.join(DATA_DIR, 'inquiries.json');
-const SETTINGS_SEED = {
-  helpMobile: '+91 98765 43210',
-  helpEmail: 'support@marimilkat.com',
-  helpHours: 'Mon - Sat: 9:00 AM - 8:00 PM',
-};
-
 const listingsStore = new AtomicJSONStore(LISTINGS_FILE, SEED);
 const usersStore = new AtomicJSONStore(USERS_FILE, []);
 const reportsStore = new AtomicJSONStore(REPORTS_FILE, []);
@@ -115,51 +136,117 @@ const categoriesStore = new AtomicJSONStore(CATEGORIES_FILE, CATEGORIES_SEED);
 const settingsStore = new AtomicJSONStore(SETTINGS_FILE, SETTINGS_SEED);
 const inquiriesStore = new AtomicJSONStore(INQUIRIES_FILE, []);
 
+// Firestore Helper Functions
+async function getFirestoreCollection(colName, seedData = []) {
+  if (!firestoreDb) return null;
+  try {
+    const snapshot = await firestoreDb.collection(colName).get();
+    if (snapshot.empty) {
+      if (seedData && (Array.isArray(seedData) ? seedData.length > 0 : Object.keys(seedData).length > 0)) {
+        await saveFirestoreCollection(colName, seedData);
+        return seedData;
+      }
+      return Array.isArray(seedData) ? [] : seedData;
+    }
+
+    if (Array.isArray(seedData)) {
+      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } else {
+      const doc = snapshot.docs[0];
+      return doc ? doc.data() : seedData;
+    }
+  } catch (err) {
+    console.warn(`[Firestore] Read error for '${colName}':`, err.message);
+    return null;
+  }
+}
+
+async function saveFirestoreCollection(colName, data) {
+  if (!firestoreDb) return false;
+  try {
+    if (Array.isArray(data)) {
+      const batch = firestoreDb.batch();
+      const existingSnap = await firestoreDb.collection(colName).get();
+      existingSnap.docs.forEach(doc => batch.delete(doc.ref));
+
+      data.forEach(item => {
+        const id = item.id || item.email || item.phone || firestoreDb.collection(colName).doc().id;
+        const ref = firestoreDb.collection(colName).doc(String(id));
+        batch.set(ref, item);
+      });
+      await batch.commit();
+    } else {
+      await firestoreDb.collection(colName).doc('main').set(data);
+    }
+    return true;
+  } catch (err) {
+    console.warn(`[Firestore] Write error for '${colName}':`, err.message);
+    return false;
+  }
+}
+
 export async function getListings() {
+  const fsData = await getFirestoreCollection('listings', SEED);
+  if (fsData !== null) return fsData;
   return await listingsStore.read();
 }
 
 export async function saveListings(listings) {
+  await saveFirestoreCollection('listings', listings);
   await listingsStore.write(listings);
 }
 
 export async function getUsers() {
+  const fsData = await getFirestoreCollection('users', []);
+  if (fsData !== null) return fsData;
   return await usersStore.read();
 }
 
 export async function saveUsers(users) {
+  await saveFirestoreCollection('users', users);
   await usersStore.write(users);
 }
 
 export async function getReports() {
+  const fsData = await getFirestoreCollection('reports', []);
+  if (fsData !== null) return fsData;
   return await reportsStore.read();
 }
 
 export async function saveReports(reports) {
+  await saveFirestoreCollection('reports', reports);
   await reportsStore.write(reports);
 }
 
 export async function getCategories() {
+  const fsData = await getFirestoreCollection('categories', CATEGORIES_SEED);
+  if (fsData !== null) return fsData;
   return await categoriesStore.read();
 }
 
 export async function saveCategories(categories) {
+  await saveFirestoreCollection('categories', categories);
   await categoriesStore.write(categories);
 }
 
 export async function getSettings() {
+  const fsData = await getFirestoreCollection('settings', SETTINGS_SEED);
+  if (fsData !== null) return fsData;
   return await settingsStore.read();
 }
 
 export async function saveSettings(settings) {
+  await saveFirestoreCollection('settings', settings);
   await settingsStore.write(settings);
 }
 
 export async function getInquiries() {
+  const fsData = await getFirestoreCollection('inquiries', []);
+  if (fsData !== null) return fsData;
   return await inquiriesStore.read();
 }
 
 export async function saveInquiries(inquiries) {
+  await saveFirestoreCollection('inquiries', inquiries);
   await inquiriesStore.write(inquiries);
 }
-

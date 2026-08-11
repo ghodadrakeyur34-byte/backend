@@ -24,6 +24,7 @@
     "morgan": "^1.10.0",
     "multer": "^2.2.0",
     "nodemailer": "^9.0.3",
+    "serverless-http": "^3.2.0",
     "xss": "^1.0.15"
   },
   "devDependencies": {

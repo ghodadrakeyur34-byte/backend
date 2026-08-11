@@ -18,7 +18,7 @@
     "email": "k73234987@gmail.com",
     "name": "keyur Keyur",
     "phone": "+916353467756",
-    "passwordHash": "$2b$10$ZTij2FE/nCM9Uzq9l39LHueIl19PiPkVodME5.GT89p/l1l2xbmYu",
+    "passwordHash": "$2b$10$feHj3x/3wqAqFDKJ2pUb/.oBzj4hIAwgk7JEggzO703fHUGQV4jhG",
     "createdAt": "2026-08-11T15:48:02.598Z",
     "loggedInAt": "2026-08-11T15:48:02.598Z",
     "status": "active",
@@ -27,7 +27,7 @@
       "email": false,
       "id": false
     },
-    "emailVerificationCode": "243142",
-    "emailVerificationExpires": 1786465453641
+    "emailVerificationCode": "203602",
+    "emailVerificationExpires": 1786465976896
   }
 ]
