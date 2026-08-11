@@ -10,14 +10,19 @@ async function createEtherealAccountWithTimeout() {
   ]);
 }
 
+const GMAIL_USER_FALLBACK = 'marimilkat@gmail.com';
+const GMAIL_PASS_FALLBACK = 'gsxa gfma vwsi fbrm';
+
 async function getTransporter() {
-  if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
-    const cleanPass = process.env.GMAIL_PASS.replace(/\s+/g, '');
+  const gmailUser = (process.env.GMAIL_USER || GMAIL_USER_FALLBACK).trim();
+  const gmailPass = (process.env.GMAIL_PASS || GMAIL_PASS_FALLBACK).replace(/\s+/g, '');
+
+  if (gmailUser && gmailPass) {
     return nodemailer.createTransport({
       service: 'gmail',
       auth: {
-        user: process.env.GMAIL_USER.trim(),
-        pass: cleanPass,
+        user: gmailUser,
+        pass: gmailPass,
       },
     });
   }
