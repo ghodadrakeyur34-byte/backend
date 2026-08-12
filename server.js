@@ -21,10 +21,11 @@ import { getListings, saveListings, getUsers, saveUsers, getReports, saveReports
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const UPLOADS_DIR = path.join(__dirname, 'uploads');
+const isServerlessEnv = process.env.VERCEL || process.env.RENDER || process.env.NETLIFY || process.env.K_SERVICE || process.env.FUNCTIONS_EMULATOR;
+const UPLOADS_DIR = isServerlessEnv ? path.join('/tmp', 'uploads') : path.join(__dirname, 'uploads');
 
 // Ensure isolated uploads directory exists
-fs.mkdir(UPLOADS_DIR, { recursive: true }).catch((err) => console.error('Error creating uploads dir:', err));
+fs.mkdir(UPLOADS_DIR, { recursive: true }).catch((err) => console.warn('Warning creating uploads dir:', err.message));
 
 const upload = multer({
   storage: multer.memoryStorage(),
