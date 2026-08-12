@@ -27,11 +27,11 @@ function getFirestoreInstance() {
           credential: admin.credential.cert(sa),
           projectId: sa.project_id || 'mari-milkat-49813',
         });
-        firestoreDb = admin.firestore();
+      } else {
+        admin.initializeApp({ projectId: 'mari-milkat-49813' });
       }
-    } else {
-      firestoreDb = admin.firestore();
     }
+    firestoreDb = admin.firestore();
   } catch (err) {
     console.warn('[Firestore] Initialization warning (falling back to JSON store):', err.message);
     firestoreDb = null;
