@@ -1,4 +1,5 @@
+import { onRequest } from 'firebase-functions/v2/https';
 import { app } from './server.js';
 
-export { app };
-export default app;
+// Export as Firebase Cloud Function
+export const api = onRequest({ cors: true, timeoutSeconds: 60, memory: '512MiB' }, app);
