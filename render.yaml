@@ -1,14 +1,15 @@
 services:
   - type: web
     name: mari-milkat-backend
-    runtime: node
+    env: node
     buildCommand: npm install
     startCommand: node server.js
     healthCheckPath: /health
-    plan: free
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PORT
+        value: 10000
       - key: ADMIN_EMAIL
         value: marimilkatadmin@gmail.com
       - key: ADMIN_PASSWORD
