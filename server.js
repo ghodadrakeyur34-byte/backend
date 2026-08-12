@@ -1485,9 +1485,8 @@ app.delete('/api/admin/inquiries/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// Start Server (only if executed directly as entrypoint script)
-const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
-if (isDirectRun) {
+// Start Server
+if (!process.env.VERCEL && !process.env.K_SERVICE && !process.env.FUNCTION_NAME) {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server is running on 0.0.0.0:${PORT}`);
   });
