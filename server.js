@@ -80,7 +80,7 @@ if (process.env.CORS_ORIGIN) {
 
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin) || (origin && (origin.endsWith('.web.app') || origin.endsWith('.firebaseapp.com') || origin.endsWith('.onrender.com') || origin.endsWith('.railway.app') || origin.endsWith('.up.railway.app')))) {
+    if (!origin || allowedOrigins.includes(origin) || (origin && (origin.endsWith('.web.app') || origin.endsWith('.firebaseapp.com') || origin.endsWith('.onrender.com') || origin.endsWith('.railway.app') || origin.endsWith('.up.railway.app') || origin.endsWith('.vercel.app')))) {
       callback(null, true);
     } else {
       callback(null, true);
@@ -1484,10 +1484,12 @@ app.delete('/api/admin/inquiries/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// Start Server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server is running on 0.0.0.0:${PORT}`);
-});
+// Start Server (only if not imported as serverless function module)
+if (!process.env.VERCEL && !process.env.K_SERVICE && !process.env.NETLIFY) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server is running on 0.0.0.0:${PORT}`);
+  });
+}
 
 export { app };
 
