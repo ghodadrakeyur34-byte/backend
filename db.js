@@ -13,25 +13,30 @@ const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const INQUIRIES_FILE = path.join(DATA_DIR, 'inquiries.json');
 
-// Initialize Firebase Admin Firestore
+// Lazy-initialize Firebase Admin Firestore
 let firestoreDb = null;
-try {
-  if (!admin.apps.length) {
-    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-      const sa = typeof process.env.FIREBASE_SERVICE_ACCOUNT === 'string'
-        ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
-        : process.env.FIREBASE_SERVICE_ACCOUNT;
-      admin.initializeApp({
-        credential: admin.credential.cert(sa),
-        projectId: sa.project_id || 'mari-milkat-49813',
-      });
+function getFirestoreInstance() {
+  if (firestoreDb) return firestoreDb;
+  try {
+    if (!admin.apps.length) {
+      if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+        const sa = typeof process.env.FIREBASE_SERVICE_ACCOUNT === 'string'
+          ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+          : process.env.FIREBASE_SERVICE_ACCOUNT;
+        admin.initializeApp({
+          credential: admin.credential.cert(sa),
+          projectId: sa.project_id || 'mari-milkat-49813',
+        });
+        firestoreDb = admin.firestore();
+      }
     } else {
-      admin.initializeApp({ projectId: 'mari-milkat-49813' });
+      firestoreDb = admin.firestore();
     }
+  } catch (err) {
+    console.warn('[Firestore] Initialization warning (falling back to JSON store):', err.message);
+    firestoreDb = null;
   }
-  firestoreDb = admin.firestore();
-} catch (err) {
-  console.warn('[Firestore] Initialization warning (falling back to JSON store):', err.message);
+  return firestoreDb;
 }
 
 const SEED = [
@@ -138,9 +143,10 @@ const inquiriesStore = new AtomicJSONStore(INQUIRIES_FILE, []);
 
 // Firestore Helper Functions
 async function getFirestoreCollection(colName, seedData = []) {
-  if (!firestoreDb) return null;
+  const db = getFirestoreInstance();
+  if (!db) return null;
   try {
-    const snapshot = await firestoreDb.collection(colName).get();
+    const snapshot = await db.collection(colName).get();
     if (snapshot.empty) {
       if (seedData && (Array.isArray(seedData) ? seedData.length > 0 : Object.keys(seedData).length > 0)) {
         await saveFirestoreCollection(colName, seedData);
@@ -162,16 +168,17 @@ async function getFirestoreCollection(colName, seedData = []) {
 }
 
 async function saveFirestoreCollection(colName, data) {
-  if (!firestoreDb) return false;
+  const db = getFirestoreInstance();
+  if (!db) return false;
   try {
     if (Array.isArray(data)) {
-      const batch = firestoreDb.batch();
-      const existingSnap = await firestoreDb.collection(colName).get();
+      const batch = db.batch();
+      const existingSnap = await db.collection(colName).get();
       existingSnap.docs.forEach(doc => batch.delete(doc.ref));
 
       data.forEach(item => {
-        const id = item.id || item.email || item.phone || firestoreDb.collection(colName).doc().id;
-        const ref = firestoreDb.collection(colName).doc(String(id));
+        const id = item.id || item.email || item.phone || db.collection(colName).doc().id;
+        const ref = db.collection(colName).doc(String(id));
         batch.set(ref, item);
       });
       await batch.commit();
