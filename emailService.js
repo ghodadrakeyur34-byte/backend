@@ -13,18 +13,40 @@ async function createEtherealAccountWithTimeout() {
 const GMAIL_USER_FALLBACK = 'marimilkat@gmail.com';
 const GMAIL_PASS_FALLBACK = 'gsxa gfma vwsi fbrm';
 
+// Cache the Gmail transporter so we reuse a verified connection
+let gmailTransporter = null;
+
 async function getTransporter() {
   const gmailUser = (process.env.GMAIL_USER || GMAIL_USER_FALLBACK).trim();
   const gmailPass = (process.env.GMAIL_PASS || GMAIL_PASS_FALLBACK).replace(/\s+/g, '');
 
   if (gmailUser && gmailPass) {
-    return nodemailer.createTransport({
-      service: 'gmail',
+    // Reuse verified transporter to avoid reconnecting every time
+    if (gmailTransporter) return gmailTransporter;
+
+    const t = nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
       auth: {
         user: gmailUser,
         pass: gmailPass,
       },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
     });
+
+    // Verify credentials once and cache
+    try {
+      await t.verify();
+      console.log('[Email Service] Gmail SMTP verified successfully for', gmailUser);
+      gmailTransporter = t;
+      return gmailTransporter;
+    } catch (verifyErr) {
+      console.error('[Email Service] Gmail SMTP verify FAILED:', verifyErr.message);
+      // Fall through to try other methods
+    }
   }
 
   if (process.env.SMTP_HOST && process.env.SMTP_USER) {
@@ -73,15 +95,22 @@ async function getTransporter() {
 export async function sendVerificationEmail(toEmail, otpCode) {
   try {
     console.log(`\n======================================================`);
-    console.log(`[EMAIL DISPATCH] Sent to: ${toEmail}`);
+    console.log(`[EMAIL DISPATCH] Sending to: ${toEmail}`);
     console.log(`[EMAIL DISPATCH] Verification Code: ${otpCode}`);
     console.log(`======================================================\n`);
 
-    const mailTransporter = await getTransporter().catch(() => null);
+    const mailTransporter = await getTransporter().catch((err) => {
+      console.error('[Email Service] getTransporter error:', err.message);
+      return null;
+    });
 
     if (!mailTransporter) {
-      return { success: true, simulated: true };
+      console.warn('[Email Service] No mail transporter available. Email NOT sent.');
+      return { success: false, simulated: true };
     }
+
+    const gmailUser = (process.env.GMAIL_USER || GMAIL_USER_FALLBACK).trim();
+    const fromAddress = process.env.SMTP_FROM || `"Mari Milkat" <${gmailUser}>`;
 
     const htmlContent = `
       <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; background-color: #090d16; color: #ffffff; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
@@ -106,10 +135,8 @@ export async function sendVerificationEmail(toEmail, otpCode) {
       </div>
     `;
 
-    const gmailUser = (process.env.GMAIL_USER || GMAIL_USER_FALLBACK).trim();
-    const fromAddress = process.env.SMTP_FROM || (gmailUser ? `"Mari Milkat" <${gmailUser}>` : '"Mari Milkat" <noreply@marimilkat.com>');
-
-    const sendPromise = mailTransporter.sendMail({
+    console.log('[Email Service] Sending email via SMTP...');
+    const result = await mailTransporter.sendMail({
       from: fromAddress,
       to: toEmail,
       subject: `${otpCode} is your Mari Milkat verification code`,
@@ -117,18 +144,11 @@ export async function sendVerificationEmail(toEmail, otpCode) {
       html: htmlContent,
     });
 
-    const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 12000));
-    const result = await Promise.race([sendPromise, timeoutPromise]);
-
-    if (result && result.timeout) {
-      console.warn('[Email Service] Mail delivery taking longer than 12s. Continuing asynchronously.');
-    } else if (result && result.messageId) {
-      console.log(`[Email Service] Delivered email to ${toEmail}. Message ID: ${result.messageId}`);
-    }
-
-    return { success: true };
+    console.log(`[Email Service] ✅ Email DELIVERED to ${toEmail}. Message ID: ${result.messageId}`);
+    return { success: true, messageId: result.messageId };
   } catch (err) {
-    console.error('[Email Service] Error sending email:', err.message);
-    return { success: true, error: err.message };
+    console.error('[Email Service] ❌ Error sending email:', err.message);
+    console.error('[Email Service] Full error:', err);
+    return { success: false, error: err.message };
   }
 }
