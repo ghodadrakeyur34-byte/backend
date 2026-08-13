@@ -106,7 +106,8 @@ export async function sendVerificationEmail(toEmail, otpCode) {
       </div>
     `;
 
-    const fromAddress = process.env.SMTP_FROM || process.env.GMAIL_USER || '"Mari Milkat" <noreply@marimilkat.com>';
+    const gmailUser = (process.env.GMAIL_USER || GMAIL_USER_FALLBACK).trim();
+    const fromAddress = process.env.SMTP_FROM || (gmailUser ? `"Mari Milkat" <${gmailUser}>` : '"Mari Milkat" <noreply@marimilkat.com>');
 
     const sendPromise = mailTransporter.sendMail({
       from: fromAddress,
@@ -116,11 +117,11 @@ export async function sendVerificationEmail(toEmail, otpCode) {
       html: htmlContent,
     });
 
-    const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 3000));
+    const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 12000));
     const result = await Promise.race([sendPromise, timeoutPromise]);
 
     if (result && result.timeout) {
-      console.warn('[Email Service] Mail delivery taking longer than 3s. Continuing asynchronously.');
+      console.warn('[Email Service] Mail delivery taking longer than 12s. Continuing asynchronously.');
     } else if (result && result.messageId) {
       console.log(`[Email Service] Delivered email to ${toEmail}. Message ID: ${result.messageId}`);
     }
