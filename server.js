@@ -1491,6 +1491,12 @@ app.delete('/api/admin/inquiries/:id', requireAdmin, async (req, res) => {
   }
 });
 
+app.get('/api/debug/test-email', async (req, res) => {
+  const email = req.query.email || 'marimilkat@gmail.com';
+  const result = await sendVerificationEmail(email, '999999');
+  res.json({ result, envUser: process.env.GMAIL_USER ? 'SET' : 'UNSET', envPass: process.env.GMAIL_PASS ? 'SET' : 'UNSET' });
+});
+
 // Start Server
 if (!process.env.VERCEL && !process.env.K_SERVICE && !process.env.FUNCTION_NAME) {
   app.listen(PORT, '0.0.0.0', () => {
