@@ -15,25 +15,33 @@ const INQUIRIES_FILE = path.join(DATA_DIR, 'inquiries.json');
 
 // Lazy-initialize Firebase Admin Firestore
 let firestoreDb = null;
+let firestoreAvailable = null; // null = untried, true = working, false = disabled
+
 function getFirestoreInstance() {
+  if (firestoreAvailable === false) return null;
   if (firestoreDb) return firestoreDb;
+  
+  // Only attempt Firestore if explicit credentials exist in environment
+  if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
+    firestoreAvailable = false;
+    return null;
+  }
+
   try {
     if (!admin.apps.length) {
-      if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-        const sa = typeof process.env.FIREBASE_SERVICE_ACCOUNT === 'string'
-          ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
-          : process.env.FIREBASE_SERVICE_ACCOUNT;
-        admin.initializeApp({
-          credential: admin.credential.cert(sa),
-          projectId: sa.project_id || 'mari-milkat-49813',
-        });
-      } else {
-        admin.initializeApp({ projectId: 'mari-milkat-49813' });
-      }
+      const sa = typeof process.env.FIREBASE_SERVICE_ACCOUNT === 'string'
+        ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+        : process.env.FIREBASE_SERVICE_ACCOUNT;
+      admin.initializeApp({
+        credential: admin.credential.cert(sa),
+        projectId: sa.project_id || 'mari-milkat-49813',
+      });
     }
     firestoreDb = admin.firestore();
+    firestoreAvailable = true;
   } catch (err) {
     console.warn('[Firestore] Initialization warning (falling back to JSON store):', err.message);
+    firestoreAvailable = false;
     firestoreDb = null;
   }
   return firestoreDb;
@@ -141,6 +149,16 @@ const categoriesStore = new AtomicJSONStore(CATEGORIES_FILE, CATEGORIES_SEED);
 const settingsStore = new AtomicJSONStore(SETTINGS_FILE, SETTINGS_SEED);
 const inquiriesStore = new AtomicJSONStore(INQUIRIES_FILE, []);
 
+// In-Memory Data Cache
+const cache = {
+  listings: null,
+  users: null,
+  reports: null,
+  categories: null,
+  settings: null,
+  inquiries: null,
+};
+
 // Firestore Helper Functions
 async function getFirestoreCollection(colName, seedData = []) {
   const db = getFirestoreInstance();
@@ -149,7 +167,7 @@ async function getFirestoreCollection(colName, seedData = []) {
     const snapshot = await db.collection(colName).get();
     if (snapshot.empty) {
       if (seedData && (Array.isArray(seedData) ? seedData.length > 0 : Object.keys(seedData).length > 0)) {
-        await saveFirestoreCollection(colName, seedData);
+        saveFirestoreCollection(colName, seedData).catch(() => {});
         return seedData;
       }
       return Array.isArray(seedData) ? [] : seedData;
@@ -163,6 +181,7 @@ async function getFirestoreCollection(colName, seedData = []) {
     }
   } catch (err) {
     console.warn(`[Firestore] Read error for '${colName}':`, err.message);
+    firestoreAvailable = false;
     return null;
   }
 }
@@ -188,72 +207,92 @@ async function saveFirestoreCollection(colName, data) {
     return true;
   } catch (err) {
     console.warn(`[Firestore] Write error for '${colName}':`, err.message);
+    firestoreAvailable = false;
     return false;
   }
 }
 
 export async function getListings() {
+  if (cache.listings !== null) return cache.listings;
   const fsData = await getFirestoreCollection('listings', SEED);
-  if (fsData !== null) return fsData;
-  return await listingsStore.read();
+  const data = fsData !== null ? fsData : await listingsStore.read();
+  cache.listings = data;
+  return data;
 }
 
 export async function saveListings(listings) {
-  await saveFirestoreCollection('listings', listings);
+  cache.listings = listings;
+  saveFirestoreCollection('listings', listings).catch(() => {});
   await listingsStore.write(listings);
 }
 
 export async function getUsers() {
+  if (cache.users !== null) return cache.users;
   const fsData = await getFirestoreCollection('users', []);
-  if (fsData !== null) return fsData;
-  return await usersStore.read();
+  const data = fsData !== null ? fsData : await usersStore.read();
+  cache.users = data;
+  return data;
 }
 
 export async function saveUsers(users) {
-  await saveFirestoreCollection('users', users);
+  cache.users = users;
+  saveFirestoreCollection('users', users).catch(() => {});
   await usersStore.write(users);
 }
 
 export async function getReports() {
+  if (cache.reports !== null) return cache.reports;
   const fsData = await getFirestoreCollection('reports', []);
-  if (fsData !== null) return fsData;
-  return await reportsStore.read();
+  const data = fsData !== null ? fsData : await reportsStore.read();
+  cache.reports = data;
+  return data;
 }
 
 export async function saveReports(reports) {
-  await saveFirestoreCollection('reports', reports);
+  cache.reports = reports;
+  saveFirestoreCollection('reports', reports).catch(() => {});
   await reportsStore.write(reports);
 }
 
 export async function getCategories() {
+  if (cache.categories !== null) return cache.categories;
   const fsData = await getFirestoreCollection('categories', CATEGORIES_SEED);
-  if (fsData !== null) return fsData;
-  return await categoriesStore.read();
+  const data = fsData !== null ? fsData : await categoriesStore.read();
+  cache.categories = data;
+  return data;
 }
 
 export async function saveCategories(categories) {
-  await saveFirestoreCollection('categories', categories);
+  cache.categories = categories;
+  saveFirestoreCollection('categories', categories).catch(() => {});
   await categoriesStore.write(categories);
 }
 
 export async function getSettings() {
+  if (cache.settings !== null) return cache.settings;
   const fsData = await getFirestoreCollection('settings', SETTINGS_SEED);
-  if (fsData !== null) return fsData;
-  return await settingsStore.read();
+  const data = fsData !== null ? fsData : await settingsStore.read();
+  cache.settings = data;
+  return data;
 }
 
 export async function saveSettings(settings) {
-  await saveFirestoreCollection('settings', settings);
+  cache.settings = settings;
+  saveFirestoreCollection('settings', settings).catch(() => {});
   await settingsStore.write(settings);
 }
 
 export async function getInquiries() {
+  if (cache.inquiries !== null) return cache.inquiries;
   const fsData = await getFirestoreCollection('inquiries', []);
-  if (fsData !== null) return fsData;
-  return await inquiriesStore.read();
+  const data = fsData !== null ? fsData : await inquiriesStore.read();
+  cache.inquiries = data;
+  return data;
 }
 
 export async function saveInquiries(inquiries) {
-  await saveFirestoreCollection('inquiries', inquiries);
+  cache.inquiries = inquiries;
+  saveFirestoreCollection('inquiries', inquiries).catch(() => {});
   await inquiriesStore.write(inquiries);
 }
+

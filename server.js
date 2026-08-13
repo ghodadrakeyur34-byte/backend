@@ -3,6 +3,7 @@ dotenv.config();
 
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import morgan from 'morgan';
 import crypto from 'crypto';
 import helmet from 'helmet';
@@ -55,6 +56,9 @@ const REFRESH_EXPIRES_IN = '7d';
 // Helmet — sets secure HTTP headers (XSS protection, CSP, HSTS, etc.)
 app.use(helmet());
 
+// Compression — Gzip/Brotli compress responses for optimal speed
+app.use(compression());
+
 // Health Check Endpoints for Render Deployment
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'Mari Milkat Backend API' });
@@ -88,6 +92,7 @@ app.use(cors({
     }
   },
   credentials: true,
+  maxAge: 86400, // Cache preflight response for 24h
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'x-admin-token', 'x-owner-phone', 'owner-phone', 'Authorization', 'x-xsrf-token', 'x-csrf-token'],
 }));
@@ -208,6 +213,7 @@ app.use('/uploads', express.static(UPLOADS_DIR, {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data:");
     res.setHeader('Content-Disposition', 'inline');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   },
 }));
 
