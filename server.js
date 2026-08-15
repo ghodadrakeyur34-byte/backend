@@ -44,6 +44,7 @@ const upload = multer({
 });
 
 const app = express();
+app.set('trust proxy', 1); // Trust Render / reverse proxy for accurate client IP identification in rate limiters
 const PORT = process.env.PORT || 5000;
 
 // ===== SECRETS & CONFIGURATION =====

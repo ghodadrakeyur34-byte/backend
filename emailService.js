@@ -2,14 +2,11 @@ import dns from 'dns';
 import nodemailer from 'nodemailer';
 
 // Render & cloud hosts do not support outbound IPv6 for SMTP.
-// Force Node.js to resolve and connect via IPv4 to prevent ENETUNREACH errors.
 try {
   if (dns.setDefaultResultOrder) {
     dns.setDefaultResultOrder('ipv4first');
   }
-} catch (e) {
-  // Ignore if not supported in older runtimes
-}
+} catch (e) {}
 
 const GMAIL_USER_FALLBACK = 'marimilkat@gmail.com';
 const GMAIL_PASS_FALLBACK = 'gsxa gfma vwsi fbrm';
@@ -26,7 +23,7 @@ function buildTransporter(port, secure) {
       host: 'smtp.gmail.com',
       port,
       secure,
-      family: 4, // CRITICAL: Force IPv4 connection to avoid Render ENETUNREACH
+      family: 4,
       pool: true,
       maxConnections: 5,
       maxMessages: 100,
@@ -36,10 +33,10 @@ function buildTransporter(port, secure) {
         user: gmailUser,
         pass: gmailPass,
       },
-      connectionTimeout: 8000,
-      greetingTimeout: 8000,
-      socketTimeout: 10000,
-      dnsTimeout: 5000,
+      connectionTimeout: 3500, // Short timeout to avoid hanging if host blocks SMTP
+      greetingTimeout: 3500,
+      socketTimeout: 5000,
+      dnsTimeout: 3000,
       tls: {
         rejectUnauthorized: true,
         minVersion: 'TLSv1.2',
@@ -59,6 +56,9 @@ function buildTransporter(port, secure) {
         user: process.env.SMTP_USER.trim(),
         pass: process.env.SMTP_PASS,
       },
+      connectionTimeout: 3500,
+      greetingTimeout: 3500,
+      socketTimeout: 5000,
     });
   }
 
@@ -67,37 +67,119 @@ function buildTransporter(port, secure) {
 
 function getTransporters() {
   if (!primaryTransporter) {
-    primaryTransporter = buildTransporter(465, true); // Direct SSL (port 465, IPv4)
+    primaryTransporter = buildTransporter(465, true);
   }
   if (!fallbackTransporter) {
-    fallbackTransporter = buildTransporter(587, false); // STARTTLS (port 587, IPv4)
+    fallbackTransporter = buildTransporter(587, false);
   }
   return { primary: primaryTransporter, fallback: fallbackTransporter };
 }
 
-// Background pre-warm verification
+// Background verification
 const { primary } = getTransporters();
 if (primary) {
   primary.verify().then(() => {
     console.log('[Email Service] ⚡ Gmail SMTP (IPv4/SSL) verified and ready');
   }).catch((err) => {
-    console.warn('[Email Service] Primary SMTP verify notice:', err.message);
+    console.warn('[Email Service] SMTP port blocked or unreachable on this host (Render blocks raw SMTP). HTTPS API recommended.');
   });
+}
+
+/**
+ * Sends email via Resend HTTPS REST API (Port 443 - 100% works on Render)
+ */
+async function sendViaResend(toEmail, otpCode, htmlContent) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return null;
+
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey.trim()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: process.env.RESEND_FROM || 'Mari Milkat <onboarding@resend.dev>',
+      to: [toEmail],
+      subject: `${otpCode} is your Mari Milkat verification code`,
+      html: htmlContent,
+    }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Resend API Error: ${data.message || JSON.stringify(data)}`);
+  }
+  return data.id || 'resend-ok';
+}
+
+/**
+ * Sends email via Brevo (Sendinblue) HTTPS REST API (Port 443 - 100% works on Render)
+ */
+async function sendViaBrevo(toEmail, otpCode, htmlContent) {
+  const apiKey = process.env.BREVO_API_KEY;
+  if (!apiKey) return null;
+
+  const gmailUser = (process.env.GMAIL_USER || GMAIL_USER_FALLBACK).trim();
+  const senderEmail = process.env.BREVO_FROM || gmailUser;
+
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': apiKey.trim(),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      sender: { name: 'Mari Milkat', email: senderEmail },
+      to: [{ email: toEmail }],
+      subject: `${otpCode} is your Mari Milkat verification code`,
+      htmlContent: htmlContent,
+    }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Brevo API Error: ${data.message || JSON.stringify(data)}`);
+  }
+  return data.messageId || 'brevo-ok';
+}
+
+/**
+ * Sends email via SendGrid HTTPS REST API (Port 443 - 100% works on Render)
+ */
+async function sendViaSendGrid(toEmail, otpCode, htmlContent) {
+  const apiKey = process.env.SENDGRID_API_KEY;
+  if (!apiKey) return null;
+
+  const gmailUser = (process.env.GMAIL_USER || GMAIL_USER_FALLBACK).trim();
+  const fromEmail = process.env.SENDGRID_FROM || gmailUser;
+
+  const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey.trim()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      personalizations: [{ to: [{ email: toEmail }] }],
+      from: { email: fromEmail, name: 'Mari Milkat' },
+      subject: `${otpCode} is your Mari Milkat verification code`,
+      content: [{ type: 'text/html', value: htmlContent }],
+    }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`SendGrid API Error: ${errorText}`);
+  }
+  return 'sendgrid-ok';
 }
 
 export async function sendVerificationEmail(toEmail, otpCode) {
   try {
     console.log(`\n======================================================`);
-    console.log(`[EMAIL DISPATCH] ⚡ Fast OTP (IPv4) to: ${toEmail}`);
-    console.log(`[EMAIL DISPATCH] Verification Code: ${otpCode}`);
+    console.log(`[EMAIL DISPATCH] ⚡ OTP Code: ${otpCode} -> ${toEmail}`);
     console.log(`======================================================\n`);
-
-    const { primary, fallback } = getTransporters();
-
-    if (!primary && !fallback) {
-      console.warn('[Email Service] No mail transporter available. Email NOT sent.');
-      return { success: false, simulated: true };
-    }
 
     const gmailUser = (process.env.GMAIL_USER || GMAIL_USER_FALLBACK).trim();
     const fromAddress = process.env.SMTP_FROM || `"Mari Milkat" <${gmailUser}>`;
@@ -146,6 +228,47 @@ export async function sendVerificationEmail(toEmail, otpCode) {
       </html>
     `;
 
+    const startTime = Date.now();
+    let messageId = null;
+
+    // 1. Try Resend HTTPS API (Fastest & 100% allowed on Render port 443)
+    if (process.env.RESEND_API_KEY) {
+      try {
+        messageId = await sendViaResend(toEmail, otpCode, htmlContent);
+        const elapsed = Date.now() - startTime;
+        console.log(`[Email Service] ✅ Delivered via Resend HTTPS in ${elapsed}ms. Message ID: ${messageId}`);
+        return { success: true, messageId, elapsedMs: elapsed };
+      } catch (resendErr) {
+        console.error('[Email Service] Resend dispatch failed:', resendErr.message);
+      }
+    }
+
+    // 2. Try Brevo HTTPS API (Port 443)
+    if (process.env.BREVO_API_KEY) {
+      try {
+        messageId = await sendViaBrevo(toEmail, otpCode, htmlContent);
+        const elapsed = Date.now() - startTime;
+        console.log(`[Email Service] ✅ Delivered via Brevo HTTPS in ${elapsed}ms. Message ID: ${messageId}`);
+        return { success: true, messageId, elapsedMs: elapsed };
+      } catch (brevoErr) {
+        console.error('[Email Service] Brevo dispatch failed:', brevoErr.message);
+      }
+    }
+
+    // 3. Try SendGrid HTTPS API (Port 443)
+    if (process.env.SENDGRID_API_KEY) {
+      try {
+        messageId = await sendViaSendGrid(toEmail, otpCode, htmlContent);
+        const elapsed = Date.now() - startTime;
+        console.log(`[Email Service] ✅ Delivered via SendGrid HTTPS in ${elapsed}ms. Message ID: ${messageId}`);
+        return { success: true, messageId, elapsedMs: elapsed };
+      } catch (sgErr) {
+        console.error('[Email Service] SendGrid dispatch failed:', sgErr.message);
+      }
+    }
+
+    // 4. Try SMTP (Direct SSL port 465 or STARTTLS port 587)
+    const { primary, fallback } = getTransporters();
     const mailOptions = {
       from: fromAddress,
       to: toEmail,
@@ -162,30 +285,30 @@ export async function sendVerificationEmail(toEmail, otpCode) {
       },
     };
 
-    const startTime = Date.now();
-    let result = null;
-
-    // Try primary (port 465, IPv4)
     if (primary) {
       try {
-        result = await primary.sendMail(mailOptions);
+        const res = await primary.sendMail(mailOptions);
+        const elapsed = Date.now() - startTime;
+        console.log(`[Email Service] ✅ Delivered via SMTP in ${elapsed}ms. Message ID: ${res.messageId}`);
+        return { success: true, messageId: res.messageId, elapsedMs: elapsed };
       } catch (primaryErr) {
-        console.warn('[Email Service] Primary SMTP failed, trying fallback port 587:', primaryErr.message);
+        console.warn('[Email Service] Primary SMTP failed (Render firewall blocks SMTP ports):', primaryErr.message);
       }
     }
 
-    // If primary failed, try fallback (port 587, IPv4)
-    if (!result && fallback) {
-      result = await fallback.sendMail(mailOptions);
+    if (fallback) {
+      try {
+        const res = await fallback.sendMail(mailOptions);
+        const elapsed = Date.now() - startTime;
+        console.log(`[Email Service] ✅ Delivered via Fallback SMTP in ${elapsed}ms. Message ID: ${res.messageId}`);
+        return { success: true, messageId: res.messageId, elapsedMs: elapsed };
+      } catch (fallbackErr) {
+        console.warn('[Email Service] Fallback SMTP failed:', fallbackErr.message);
+      }
     }
 
-    if (!result) {
-      throw new Error('All SMTP transporters failed to send message');
-    }
-
-    const elapsed = Date.now() - startTime;
-    console.log(`[Email Service] ✅ Email DELIVERED to ${toEmail} in ${elapsed}ms. Message ID: ${result.messageId}`);
-    return { success: true, messageId: result.messageId, elapsedMs: elapsed };
+    console.warn(`[Email Service] ⚠️ Notice: Render blocks raw SMTP ports (465/587). Add RESEND_API_KEY or BREVO_API_KEY in Render Environment Variables for instant HTTPS email delivery.`);
+    return { success: false, error: 'SMTP ports blocked on host. Use HTTPS API (Resend/Brevo).' };
   } catch (err) {
     console.error('[Email Service] ❌ Error sending email:', err.message);
     return { success: false, error: err.message };
