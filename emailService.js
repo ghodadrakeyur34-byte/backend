@@ -1,26 +1,33 @@
+import dns from 'dns';
 import nodemailer from 'nodemailer';
+
+// Render & cloud hosts do not support outbound IPv6 for SMTP.
+// Force Node.js to resolve and connect via IPv4 to prevent ENETUNREACH errors.
+try {
+  if (dns.setDefaultResultOrder) {
+    dns.setDefaultResultOrder('ipv4first');
+  }
+} catch (e) {
+  // Ignore if not supported in older runtimes
+}
 
 const GMAIL_USER_FALLBACK = 'marimilkat@gmail.com';
 const GMAIL_PASS_FALLBACK = 'gsxa gfma vwsi fbrm';
 
-let cachedTransporter = null;
-let isVerifying = false;
+let primaryTransporter = null;
+let fallbackTransporter = null;
 
-/**
- * Creates an ultra-fast pooled SMTP transporter.
- * Connection pooling keeps connections open and authenticated,
- * avoiding the 2-4 second TLS handshake overhead on every email.
- */
-function createTransporter() {
-  if (cachedTransporter) return cachedTransporter;
-
+function buildTransporter(port, secure) {
   const gmailUser = (process.env.GMAIL_USER || GMAIL_USER_FALLBACK).trim();
   const gmailPass = (process.env.GMAIL_PASS || GMAIL_PASS_FALLBACK).replace(/\s+/g, '');
 
   if (gmailUser && gmailPass) {
-    cachedTransporter = nodemailer.createTransport({
-      service: 'gmail',
-      pool: true, // Keep open connections warm in a pool
+    return nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port,
+      secure,
+      family: 4, // CRITICAL: Force IPv4 connection to avoid Render ENETUNREACH
+      pool: true,
       maxConnections: 5,
       maxMessages: 100,
       rateDelta: 1000,
@@ -38,27 +45,14 @@ function createTransporter() {
         minVersion: 'TLSv1.2',
       },
     });
-
-    // Pre-warm connection pool in background without blocking requests
-    if (!isVerifying) {
-      isVerifying = true;
-      cachedTransporter.verify().then(() => {
-        console.log(`[Email Service] ⚡ Gmail SMTP connection pool is ready & warm for ${gmailUser}`);
-      }).catch((err) => {
-        console.warn(`[Email Service] SMTP verification warning:`, err.message);
-      }).finally(() => {
-        isVerifying = false;
-      });
-    }
-
-    return cachedTransporter;
   }
 
   if (process.env.SMTP_HOST && process.env.SMTP_USER) {
-    cachedTransporter = nodemailer.createTransport({
+    return nodemailer.createTransport({
       host: process.env.SMTP_HOST.trim(),
       port: parseInt(process.env.SMTP_PORT || '587', 10),
       secure: process.env.SMTP_SECURE === 'true',
+      family: 4,
       pool: true,
       maxConnections: 5,
       auth: {
@@ -66,29 +60,41 @@ function createTransporter() {
         pass: process.env.SMTP_PASS,
       },
     });
-    return cachedTransporter;
   }
 
   return null;
 }
 
-// Pre-initialize transporter immediately on module load
-try {
-  createTransporter();
-} catch (e) {
-  // Silent catch during module bootstrap
+function getTransporters() {
+  if (!primaryTransporter) {
+    primaryTransporter = buildTransporter(465, true); // Direct SSL (port 465, IPv4)
+  }
+  if (!fallbackTransporter) {
+    fallbackTransporter = buildTransporter(587, false); // STARTTLS (port 587, IPv4)
+  }
+  return { primary: primaryTransporter, fallback: fallbackTransporter };
+}
+
+// Background pre-warm verification
+const { primary } = getTransporters();
+if (primary) {
+  primary.verify().then(() => {
+    console.log('[Email Service] ⚡ Gmail SMTP (IPv4/SSL) verified and ready');
+  }).catch((err) => {
+    console.warn('[Email Service] Primary SMTP verify notice:', err.message);
+  });
 }
 
 export async function sendVerificationEmail(toEmail, otpCode) {
   try {
     console.log(`\n======================================================`);
-    console.log(`[EMAIL DISPATCH] ⚡ Fast OTP to: ${toEmail}`);
+    console.log(`[EMAIL DISPATCH] ⚡ Fast OTP (IPv4) to: ${toEmail}`);
     console.log(`[EMAIL DISPATCH] Verification Code: ${otpCode}`);
     console.log(`======================================================\n`);
 
-    const mailTransporter = createTransporter();
+    const { primary, fallback } = getTransporters();
 
-    if (!mailTransporter) {
+    if (!primary && !fallback) {
       console.warn('[Email Service] No mail transporter available. Email NOT sent.');
       return { success: false, simulated: true };
     }
@@ -140,8 +146,7 @@ export async function sendVerificationEmail(toEmail, otpCode) {
       </html>
     `;
 
-    const startTime = Date.now();
-    const result = await mailTransporter.sendMail({
+    const mailOptions = {
       from: fromAddress,
       to: toEmail,
       subject: `${otpCode} is your Mari Milkat verification code`,
@@ -155,7 +160,28 @@ export async function sendVerificationEmail(toEmail, otpCode) {
         'Priority': 'urgent',
         'X-Mailer': 'MariMilkat Auth',
       },
-    });
+    };
+
+    const startTime = Date.now();
+    let result = null;
+
+    // Try primary (port 465, IPv4)
+    if (primary) {
+      try {
+        result = await primary.sendMail(mailOptions);
+      } catch (primaryErr) {
+        console.warn('[Email Service] Primary SMTP failed, trying fallback port 587:', primaryErr.message);
+      }
+    }
+
+    // If primary failed, try fallback (port 587, IPv4)
+    if (!result && fallback) {
+      result = await fallback.sendMail(mailOptions);
+    }
+
+    if (!result) {
+      throw new Error('All SMTP transporters failed to send message');
+    }
 
     const elapsed = Date.now() - startTime;
     console.log(`[Email Service] ✅ Email DELIVERED to ${toEmail} in ${elapsed}ms. Message ID: ${result.messageId}`);
