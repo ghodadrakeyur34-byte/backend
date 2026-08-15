@@ -1,108 +1,92 @@
 import nodemailer from 'nodemailer';
 
-let transporter = null;
-let etherealAttempted = false;
-
-async function createEtherealAccountWithTimeout() {
-  return Promise.race([
-    nodemailer.createTestAccount(),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('Ethereal setup timeout')), 3000))
-  ]);
-}
-
 const GMAIL_USER_FALLBACK = 'marimilkat@gmail.com';
 const GMAIL_PASS_FALLBACK = 'gsxa gfma vwsi fbrm';
 
-// Cache the Gmail transporter so we reuse a verified connection
-let gmailTransporter = null;
+let cachedTransporter = null;
+let isVerifying = false;
 
-async function getTransporter() {
+/**
+ * Creates an ultra-fast pooled SMTP transporter.
+ * Connection pooling keeps connections open and authenticated,
+ * avoiding the 2-4 second TLS handshake overhead on every email.
+ */
+function createTransporter() {
+  if (cachedTransporter) return cachedTransporter;
+
   const gmailUser = (process.env.GMAIL_USER || GMAIL_USER_FALLBACK).trim();
   const gmailPass = (process.env.GMAIL_PASS || GMAIL_PASS_FALLBACK).replace(/\s+/g, '');
 
   if (gmailUser && gmailPass) {
-    // Reuse verified transporter to avoid reconnecting every time
-    if (gmailTransporter) return gmailTransporter;
-
-    const t = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
+    cachedTransporter = nodemailer.createTransport({
+      service: 'gmail',
+      pool: true, // Keep open connections warm in a pool
+      maxConnections: 5,
+      maxMessages: 100,
+      rateDelta: 1000,
+      rateLimit: 14,
       auth: {
         user: gmailUser,
         pass: gmailPass,
       },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000,
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 10000,
+      dnsTimeout: 5000,
+      tls: {
+        rejectUnauthorized: true,
+        minVersion: 'TLSv1.2',
+      },
     });
 
-    // Verify credentials once and cache
-    try {
-      await t.verify();
-      console.log('[Email Service] Gmail SMTP verified successfully for', gmailUser);
-      gmailTransporter = t;
-      return gmailTransporter;
-    } catch (verifyErr) {
-      console.error('[Email Service] Gmail SMTP verify FAILED:', verifyErr.message);
-      // Fall through to try other methods
+    // Pre-warm connection pool in background without blocking requests
+    if (!isVerifying) {
+      isVerifying = true;
+      cachedTransporter.verify().then(() => {
+        console.log(`[Email Service] ⚡ Gmail SMTP connection pool is ready & warm for ${gmailUser}`);
+      }).catch((err) => {
+        console.warn(`[Email Service] SMTP verification warning:`, err.message);
+      }).finally(() => {
+        isVerifying = false;
+      });
     }
+
+    return cachedTransporter;
   }
 
   if (process.env.SMTP_HOST && process.env.SMTP_USER) {
-    return nodemailer.createTransport({
+    cachedTransporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST.trim(),
       port: parseInt(process.env.SMTP_PORT || '587', 10),
       secure: process.env.SMTP_SECURE === 'true',
+      pool: true,
+      maxConnections: 5,
       auth: {
         user: process.env.SMTP_USER.trim(),
         pass: process.env.SMTP_PASS,
       },
     });
-  }
-
-  if (transporter) return transporter;
-
-  // In production or cloud hosts without SMTP credentials, skip Ethereal setup to avoid network timeouts
-  const isCloudHost = Boolean(process.env.RENDER) || Boolean(process.env.K_SERVICE) || process.env.NODE_ENV === 'production';
-  if (isCloudHost) {
-    return null;
-  }
-
-  if (!etherealAttempted) {
-    etherealAttempted = true;
-    try {
-      const testAccount = await createEtherealAccountWithTimeout();
-      transporter = nodemailer.createTransport({
-        host: 'smtp.ethereal.email',
-        port: 587,
-        secure: false,
-        auth: {
-          user: testAccount.user,
-          pass: testAccount.pass,
-        },
-      });
-      console.log('[Email Service] Created Ethereal test SMTP account:', testAccount.user);
-      return transporter;
-    } catch (err) {
-      console.log('[Email Service] Ethereal setup skipped/timed out. Falling back to console.');
-    }
+    return cachedTransporter;
   }
 
   return null;
 }
 
+// Pre-initialize transporter immediately on module load
+try {
+  createTransporter();
+} catch (e) {
+  // Silent catch during module bootstrap
+}
+
 export async function sendVerificationEmail(toEmail, otpCode) {
   try {
     console.log(`\n======================================================`);
-    console.log(`[EMAIL DISPATCH] Sending to: ${toEmail}`);
+    console.log(`[EMAIL DISPATCH] ⚡ Fast OTP to: ${toEmail}`);
     console.log(`[EMAIL DISPATCH] Verification Code: ${otpCode}`);
     console.log(`======================================================\n`);
 
-    const mailTransporter = await getTransporter().catch((err) => {
-      console.error('[Email Service] getTransporter error:', err.message);
-      return null;
-    });
+    const mailTransporter = createTransporter();
 
     if (!mailTransporter) {
       console.warn('[Email Service] No mail transporter available. Email NOT sent.');
@@ -113,42 +97,72 @@ export async function sendVerificationEmail(toEmail, otpCode) {
     const fromAddress = process.env.SMTP_FROM || `"Mari Milkat" <${gmailUser}>`;
 
     const htmlContent = `
-      <div style="font-family: Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; background-color: #090d16; color: #ffffff; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
-        <div style="text-align: center; margin-bottom: 20px;">
-          <h1 style="font-size: 24px; color: #ffffff; margin: 0;">🏠 Mari<span style="color: #e2b857;">Milkat</span></h1>
-          <p style="font-size: 14px; color: #94a3b8; margin-top: 4px;">Email Verification Code</p>
-        </div>
-
-        <div style="background: rgba(17, 24, 39, 0.8); padding: 20px; border-radius: 8px; text-align: center; border: 1px solid rgba(226, 184, 87, 0.2);">
-          <p style="font-size: 15px; color: #cbd5e1; margin-bottom: 12px;">Your 6-digit verification code is:</p>
-          <div style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #e2b857; background: #000000; padding: 12px 24px; border-radius: 6px; display: inline-block;">
-            ${otpCode}
-          </div>
-          <p style="font-size: 13px; color: #94a3b8; margin-top: 16px; margin-bottom: 0;">
-            This code will expire in <strong>15 minutes</strong>.
-          </p>
-        </div>
-
-        <p style="font-size: 12px; color: #64748b; text-align: center; margin-top: 24px;">
-          If you did not request this verification code, please ignore this email.
-        </p>
-      </div>
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      </head>
+      <body style="margin: 0; padding: 0; background-color: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+        <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #0b0f19; padding: 30px 10px;">
+          <tr>
+            <td align="center">
+              <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 500px; background-color: #111827; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden;">
+                <tr>
+                  <td style="padding: 24px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.06);">
+                    <h1 style="font-size: 26px; color: #ffffff; margin: 0; font-weight: 700;">🏠 Mari<span style="color: #e2b857;">Milkat</span></h1>
+                    <p style="font-size: 13px; color: #94a3b8; margin: 6px 0 0 0; text-transform: uppercase; letter-spacing: 1px;">Email Verification</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 32px 24px; text-align: center;">
+                    <p style="font-size: 15px; color: #cbd5e1; margin: 0 0 20px 0;">Use the 6-digit verification code below to complete your sign-in:</p>
+                    <div style="display: inline-block; background-color: #000000; border: 2px solid #e2b857; border-radius: 10px; padding: 14px 28px;">
+                      <span style="font-size: 36px; font-weight: 800; letter-spacing: 10px; color: #e2b857; font-family: monospace;">${otpCode}</span>
+                    </div>
+                    <p style="font-size: 13px; color: #94a3b8; margin: 20px 0 0 0;">
+                      ⏱️ This code will expire in <strong>15 minutes</strong>.
+                    </p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 16px 24px; background-color: #0d131f; text-align: center; border-top: 1px solid rgba(255,255,255,0.06);">
+                    <p style="font-size: 12px; color: #64748b; margin: 0;">
+                      If you did not request this verification code, you can safely ignore this email.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
     `;
 
-    console.log('[Email Service] Sending email via SMTP...');
+    const startTime = Date.now();
     const result = await mailTransporter.sendMail({
       from: fromAddress,
       to: toEmail,
       subject: `${otpCode} is your Mari Milkat verification code`,
       text: `Your Mari Milkat verification code is: ${otpCode}. It expires in 15 minutes.`,
       html: htmlContent,
+      priority: 'high',
+      headers: {
+        'X-Priority': '1 (Highest)',
+        'X-MSMail-Priority': 'High',
+        'Importance': 'High',
+        'Priority': 'urgent',
+        'X-Mailer': 'MariMilkat Auth',
+      },
     });
 
-    console.log(`[Email Service] ✅ Email DELIVERED to ${toEmail}. Message ID: ${result.messageId}`);
-    return { success: true, messageId: result.messageId };
+    const elapsed = Date.now() - startTime;
+    console.log(`[Email Service] ✅ Email DELIVERED to ${toEmail} in ${elapsed}ms. Message ID: ${result.messageId}`);
+    return { success: true, messageId: result.messageId, elapsedMs: elapsed };
   } catch (err) {
     console.error('[Email Service] ❌ Error sending email:', err.message);
-    console.error('[Email Service] Full error:', err);
     return { success: false, error: err.message };
   }
 }
+

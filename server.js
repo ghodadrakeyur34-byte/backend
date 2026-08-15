@@ -461,8 +461,10 @@ app.post('/api/auth/send-email-otp', authLimiter, async (req, res) => {
     user.emailVerificationExpires = Date.now() + 15 * 60 * 1000; // 15 mins expiry
     await saveUsers(users);
 
-    // Dispatch verification email via Nodemailer SMTP / Email Service
-    await sendVerificationEmail(trimmedEmail, otpCode);
+    // Dispatch verification email immediately via fast pooled SMTP
+    sendVerificationEmail(trimmedEmail, otpCode).catch((err) => {
+      console.error('[Auth] Background email send error:', err?.message || err);
+    });
 
     res.json({
       success: true,
@@ -591,8 +593,10 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       user.emailVerificationExpires = Date.now() + 15 * 60 * 1000;
       await saveUsers(users);
 
-      // Dispatch verification email via Nodemailer SMTP / Email Service
-      await sendVerificationEmail(trimmedEmail, otpCode);
+      // Dispatch verification email immediately via fast pooled SMTP
+      sendVerificationEmail(trimmedEmail, otpCode).catch((err) => {
+        console.error('[Auth] Background email send error during login:', err?.message || err);
+      });
 
       return res.json({
         success: false,
@@ -652,7 +656,11 @@ app.post('/api/auth/signup', signupLimiter, async (req, res) => {
       existingUser.emailVerificationExpires = Date.now() + 15 * 60 * 1000;
 
       await saveUsers(users);
-      await sendVerificationEmail(trimmedEmail, otpCode);
+      
+      // Dispatch verification email immediately via fast pooled SMTP
+      sendVerificationEmail(trimmedEmail, otpCode).catch((err) => {
+        console.error('[Auth] Background email send error during existing user update:', err?.message || err);
+      });
 
       return res.json({
         success: true,
@@ -682,8 +690,10 @@ app.post('/api/auth/signup', signupLimiter, async (req, res) => {
 
     await saveUsers(users);
 
-    // Dispatch verification email via Nodemailer SMTP / Email Service
-    await sendVerificationEmail(trimmedEmail, otpCode);
+    // Dispatch verification email immediately via fast pooled SMTP
+    sendVerificationEmail(trimmedEmail, otpCode).catch((err) => {
+      console.error('[Auth] Background email send error during signup:', err?.message || err);
+    });
 
     res.json({
       success: true,
