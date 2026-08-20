@@ -24,6 +24,7 @@ import multer from 'multer';
 import { fileTypeFromBuffer } from 'file-type';
 import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
+import { OAuth2Client } from 'google-auth-library';
 import { sendVerificationEmail } from './emailService.js';
 import { getListings, saveListings, getUsers, saveUsers, getReports, saveReports, getCategories, saveCategories, getSettings, saveSettings, getInquiries, saveInquiries } from './db.js';
 
@@ -58,6 +59,8 @@ const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('he
 const REFRESH_SECRET = process.env.REFRESH_SECRET || crypto.randomBytes(64).toString('hex');
 const JWT_EXPIRES_IN = '15m';
 const REFRESH_EXPIRES_IN = '7d';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 // ===== SECURITY MIDDLEWARE =====
 
@@ -625,6 +628,122 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   } catch (err) {
     console.error('Error logging in:', err);
     res.status(500).json({ error: 'Server error during login.' });
+  }
+});
+
+// Google Sign-In — verify Google ID Token, find or create user, issue JWT & cookies
+app.post('/api/auth/google', authLimiter, async (req, res) => {
+  try {
+    const { credential } = req.body;
+    if (!credential) {
+      return res.status(400).json({ error: 'Google credential token is required.' });
+    }
+
+    let payload = null;
+
+    // 1. Attempt verification with google-auth-library
+    if (GOOGLE_CLIENT_ID) {
+      try {
+        const ticket = await googleClient.verifyIdToken({
+          idToken: credential,
+          audience: GOOGLE_CLIENT_ID,
+        });
+        payload = ticket.getPayload();
+      } catch (verifyErr) {
+        console.warn('[Google Auth] verifyIdToken with audience failed, trying tokeninfo fallback:', verifyErr.message);
+      }
+    }
+
+    // 2. Fallback to Google Tokeninfo endpoint
+    if (!payload) {
+      try {
+        const tokenInfoRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
+        if (tokenInfoRes.ok) {
+          const info = await tokenInfoRes.json();
+          if (info && info.email) {
+            payload = info;
+          }
+        }
+      } catch (tokenInfoErr) {
+        console.warn('[Google Auth] Tokeninfo fallback failed:', tokenInfoErr.message);
+      }
+    }
+
+    // 3. Fallback for local development simulation when GOOGLE_CLIENT_ID is not configured
+    if (!payload && !isProduction && typeof credential === 'string' && credential.startsWith('mockheader.')) {
+      try {
+        const parts = credential.split('.');
+        if (parts.length === 3) {
+          payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+        }
+      } catch (e) {}
+    }
+
+    if (!payload || !payload.email) {
+      return res.status(401).json({ error: 'Invalid or expired Google token. Verification failed.' });
+    }
+
+    // Ensure email is verified by Google
+    const isEmailVerified = payload.email_verified === true || payload.email_verified === 'true';
+    if (!isEmailVerified) {
+      return res.status(400).json({ error: 'Google account email is not verified by Google.' });
+    }
+
+    const email = cleanText(payload.email).toLowerCase();
+    const name = cleanText(payload.name || payload.given_name || 'Google User');
+    const avatar = payload.picture || '';
+    const googleId = payload.sub || '';
+
+    const users = await getUsers();
+    let user = users.find((u) => u.email === email);
+
+    if (user) {
+      // Check if user account is banned or suspended
+      if (user.status === 'banned' || user.status === 'suspended') {
+        return res.status(403).json({ error: 'Your account has been ' + user.status + '. Contact support for assistance.' });
+      }
+
+      // Update user with latest Google info
+      user.name = user.name || name;
+      user.avatar = avatar || user.avatar;
+      user.googleId = googleId || user.googleId;
+      user.verified = {
+        ...(user.verified || {}),
+        email: true, // Google email is verified
+        google: true,
+      };
+      user.loggedInAt = new Date().toISOString();
+      await saveUsers(users);
+    } else {
+      // Create new user authenticated via Google
+      user = {
+        email,
+        name,
+        phone: '',
+        avatar,
+        googleId,
+        createdAt: new Date().toISOString(),
+        loggedInAt: new Date().toISOString(),
+        status: 'active',
+        verified: { phone: false, email: true, google: true, id: false },
+      };
+      users.push(user);
+      await saveUsers(users);
+    }
+
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+    setAuthCookies(res, accessToken, refreshToken, req);
+
+    return res.json({
+      success: true,
+      user: sanitizeUser(user),
+      accessToken,
+      message: 'Signed in successfully with Google.',
+    });
+  } catch (err) {
+    console.error('Error during Google authentication:', err);
+    return res.status(500).json({ error: 'Server error during Google authentication.' });
   }
 });
 

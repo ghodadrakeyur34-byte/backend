@@ -29,5 +29,21 @@
     },
     "emailVerificationCode": "203602",
     "emailVerificationExpires": 1786465976896
+  },
+  {
+    "email": "ghodadrakeyur34@gmail.com",
+    "name": "Ghodadrakeyur34",
+    "phone": "",
+    "avatar": "https://lh3.googleusercontent.com/a/ACg8ocLxHGYiGuAe8AXS9460nUr67hf_FsOo0zGyMaA8Ji6F7QNYQ9rI=s96-c",
+    "googleId": "106687619847389831000",
+    "createdAt": "2026-08-20T06:06:24.584Z",
+    "loggedInAt": "2026-08-20T06:36:14.938Z",
+    "status": "active",
+    "verified": {
+      "phone": false,
+      "email": true,
+      "google": true,
+      "id": false
+    }
   }
 ]
