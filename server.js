@@ -1381,9 +1381,10 @@ app.post('/api/listings', listingCreationLimiter, authenticateUser, async (req, 
       Junagadh: { lat: 21.5222, lng: 70.4579 },
     };
 
-    const defaultCoord = cityCoords[city] || { lat: 20.9082, lng: 70.3703 };
-    const finalLat = lat !== undefined && lat !== null && !isNaN(Number(lat)) ? Number(lat) : defaultCoord.lat;
-    const finalLng = lng !== undefined && lng !== null && !isNaN(Number(lng)) ? Number(lng) : defaultCoord.lng;
+    const incomingLat = lat !== undefined && lat !== null ? lat : req.body.latitude;
+    const incomingLng = lng !== undefined && lng !== null ? lng : req.body.longitude;
+    const finalLat = incomingLat !== undefined && incomingLat !== null && !isNaN(Number(incomingLat)) ? Number(incomingLat) : defaultCoord.lat;
+    const finalLng = incomingLng !== undefined && incomingLng !== null && !isNaN(Number(incomingLng)) ? Number(incomingLng) : defaultCoord.lng;
 
     const listings = await getListings();
     const id = 'p' + Date.now() + Math.random().toString(36).slice(2, 6);
