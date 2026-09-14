@@ -1334,13 +1334,31 @@ app.get('/api/categories', async (req, res) => {
 
 // ===== LISTINGS ROUTES =====
 
-// 1. Get all listings (public — only active listings)
+// 1. Get all listings (public — active listings, plus requesting user's own listings)
 app.get('/api/listings', async (req, res) => {
   try {
     const listings = await getListings();
-    // Public API only returns active listings
-    const publicListings = listings.filter(l => (l.status || 'active') === 'active');
-    res.json(publicListings);
+    
+    // Check if a user token is provided to include user's own listings regardless of status
+    let requestingUserId = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.split(' ')[1];
+        const decoded = jwt.verify(token, JWT_SECRET);
+        requestingUserId = decoded.phone || decoded.email;
+      } catch (e) {}
+    }
+    const headerPhone = req.headers['owner-phone'] || req.headers['x-user-phone'];
+    if (headerPhone) requestingUserId = requestingUserId || headerPhone;
+
+    const visibleListings = listings.filter(l => {
+      const isActive = (l.status || 'active') === 'active';
+      const isOwner = requestingUserId && (l.ownerId === requestingUserId || l.contact?.phone === requestingUserId);
+      return isActive || isOwner;
+    });
+
+    res.json(visibleListings);
   } catch (err) {
     console.error('Error reading listings:', err);
     res.status(500).json({ error: 'Server error reading listings.' });
@@ -1381,6 +1399,7 @@ app.post('/api/listings', listingCreationLimiter, authenticateUser, async (req, 
       Junagadh: { lat: 21.5222, lng: 70.4579 },
     };
 
+    const defaultCoord = cityCoords[city] || { lat: 20.9082, lng: 70.3703 };
     const incomingLat = lat !== undefined && lat !== null ? lat : req.body.latitude;
     const incomingLng = lng !== undefined && lng !== null ? lng : req.body.longitude;
     const finalLat = incomingLat !== undefined && incomingLat !== null && !isNaN(Number(incomingLat)) ? Number(incomingLat) : defaultCoord.lat;
@@ -1410,7 +1429,7 @@ app.post('/api/listings', listingCreationLimiter, authenticateUser, async (req, 
       date: new Date().toISOString().split('T')[0],
       ownerId: req.user.phone || req.user.email,
       priceChangeLog: [],
-      status: 'pending' // Moderation requirement: defaults to pending
+      status: 'active' // Active by default so listing stays visible to everyone immediately
     };
 
     listings.unshift(newListing);
