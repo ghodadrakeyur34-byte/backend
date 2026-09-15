@@ -354,14 +354,54 @@ function authenticateUser(req, res, next) {
     }
   }
 
-  // Fallback to owner phone header if provided (backwards compatibility)
+  // Fallback to owner phone / email header if provided (backwards compatibility)
   if (ownerPhoneHeader) {
-    req.user = { phone: ownerPhoneHeader };
+    if (ownerPhoneHeader.includes('@')) {
+      req.user = { email: ownerPhoneHeader.trim().toLowerCase(), phone: '' };
+    } else {
+      req.user = { phone: ownerPhoneHeader.trim(), email: '' };
+    }
     return next();
   }
 
   return res.status(401).json({ error: 'Authentication required. Please sign in.' });
 }
+
+/**
+ * Robust check if the requesting user owns a listing or is admin.
+ * Supports case-insensitive email, normalized phone, contact details, and owner IDs.
+ */
+function checkIsListingOwner(listing, user, isAdmin) {
+  if (isAdmin) return true;
+  if (!listing || !user) return false;
+
+  const cleanStr = (s) => (s ? String(s).trim().toLowerCase() : '');
+  const cleanPhone = (p) => (p ? String(p).replace(/\D/g, '').slice(-10) : '');
+
+  const userEmail = cleanStr(user.email);
+  const userPhone = cleanPhone(user.phone);
+
+  const ownerId = cleanStr(listing.ownerId);
+  const ownerEmail = cleanStr(listing.ownerEmail || listing.contact?.email);
+  const ownerPhone = cleanPhone(listing.ownerPhone || (listing.ownerId && !listing.ownerId.includes('@') ? listing.ownerId : ''));
+  const contactPhone = cleanPhone(listing.contact?.phone);
+  const contactEmail = cleanStr(listing.contact?.email);
+
+  if (userEmail) {
+    if (ownerId === userEmail || ownerEmail === userEmail || contactEmail === userEmail) {
+      return true;
+    }
+  }
+
+  if (userPhone && userPhone.length >= 7) {
+    if (ownerPhone === userPhone || contactPhone === userPhone || cleanPhone(listing.ownerId) === userPhone) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 
 // ===== FILE VALIDATION & UPLOAD HELPERS =====
 
@@ -1354,8 +1394,20 @@ app.get('/api/listings', async (req, res) => {
 
     const visibleListings = listings.filter(l => {
       const isActive = (l.status || 'active') === 'active';
-      const isOwner = requestingUserId && (l.ownerId === requestingUserId || l.contact?.phone === requestingUserId);
-      return isActive || isOwner;
+      if (isActive) return true;
+      if (!requestingUserId) return false;
+      const reqIdLower = requestingUserId.toLowerCase();
+      const reqPhone = requestingUserId.replace(/\D/g, '').slice(-10);
+      return (
+        (l.ownerId && l.ownerId.toLowerCase() === reqIdLower) ||
+        (l.ownerEmail && l.ownerEmail.toLowerCase() === reqIdLower) ||
+        (l.contact?.email && l.contact.email.toLowerCase() === reqIdLower) ||
+        (reqPhone && reqPhone.length >= 7 && (
+          String(l.ownerId).replace(/\D/g, '').slice(-10) === reqPhone ||
+          String(l.ownerPhone || '').replace(/\D/g, '').slice(-10) === reqPhone ||
+          String(l.contact?.phone || '').replace(/\D/g, '').slice(-10) === reqPhone
+        ))
+      );
     });
 
     res.json(visibleListings);
@@ -1408,7 +1460,12 @@ app.post('/api/listings', listingCreationLimiter, authenticateUser, async (req, 
     const listings = await getListings();
     const id = 'p' + Date.now() + Math.random().toString(36).slice(2, 6);
 
-    // Mass Assignment Protection: Construct listing explicitly, set ownerId from req.user
+    // Extract owner identification from authenticated session or payload
+    const incomingOwnerEmail = req.user?.email || (contact.email ? cleanText(contact.email) : (req.body.ownerEmail ? cleanText(req.body.ownerEmail) : ''));
+    const incomingOwnerPhone = req.user?.phone || (contact.phone ? cleanText(contact.phone) : (req.body.ownerPhone ? cleanText(req.body.ownerPhone) : ''));
+    const ownerId = req.user?.email || req.user?.phone || req.body.ownerId || incomingOwnerEmail || incomingOwnerPhone || 'user';
+
+    // Mass Assignment Protection: Construct listing explicitly
     const newListing = {
       id,
       type: cleanText(type),
@@ -1425,9 +1482,12 @@ app.post('/api/listings', listingCreationLimiter, authenticateUser, async (req, 
       contact: {
         name: cleanText(contact.name),
         phone: cleanText(contact.phone),
+        email: cleanText(contact.email || incomingOwnerEmail || ''),
       },
       date: new Date().toISOString().split('T')[0],
-      ownerId: req.user.phone || req.user.email,
+      ownerId,
+      ownerEmail: incomingOwnerEmail,
+      ownerPhone: incomingOwnerPhone,
       priceChangeLog: [],
       status: 'active' // Active by default so listing stays visible to everyone immediately
     };
@@ -1456,8 +1516,8 @@ app.delete('/api/listings/:id', authenticateUser, async (req, res) => {
     const listing = listings[listingIndex];
     
     // IDOR Check: Ensure user owns listing or is admin
-    const isOwner = listing.ownerId && (listing.ownerId === req.user.phone || listing.ownerId === req.user.email);
-    if (!isOwner && !req.isAdmin) {
+    const isOwner = checkIsListingOwner(listing, req.user, req.isAdmin);
+    if (!isOwner) {
       return res.status(403).json({ error: 'Forbidden. You do not own this listing.' });
     }
 
@@ -1492,8 +1552,8 @@ app.put('/api/listings/:id/price', authenticateUser, async (req, res) => {
     const listing = listings[listingIndex];
 
     // IDOR Check: Ensure user owns listing or is admin
-    const isOwner = listing.ownerId && (listing.ownerId === req.user.phone || listing.ownerId === req.user.email);
-    if (!isOwner && !req.isAdmin) {
+    const isOwner = checkIsListingOwner(listing, req.user, req.isAdmin);
+    if (!isOwner) {
       return res.status(403).json({ error: 'Forbidden. You do not own this listing.' });
     }
 
