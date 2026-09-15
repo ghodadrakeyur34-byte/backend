@@ -1489,7 +1489,7 @@ app.post('/api/listings', listingCreationLimiter, authenticateUser, async (req, 
       ownerEmail: incomingOwnerEmail,
       ownerPhone: incomingOwnerPhone,
       priceChangeLog: [],
-      status: 'active' // Active by default so listing stays visible to everyone immediately
+      status: 'pending' // Moderation requirement: defaults to pending until approved by admin
     };
 
     listings.unshift(newListing);

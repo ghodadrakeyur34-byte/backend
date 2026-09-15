@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "id": "p1789486237781yig7",
+    "type": "house",
+    "title": "fnkbjf",
+    "desc": "mfnkjkf",
+    "price": 654666,
+    "size": 2,
+    "unit": "sqft",
+    "area": "fjnbn",
+    "city": "Veraval",
+    "lat": 20.90757606676084,
+    "lng": 70.36668216129021,
+    "images": [],
+    "contact": {
+      "name": "Admin",
+      "phone": "656465656",
+      "email": "marimilkatadmin@gmail.com"
+    },
+    "date": "2026-09-15",
+    "ownerId": "marimilkatadmin@gmail.com",
+    "ownerEmail": "marimilkatadmin@gmail.com",
+    "ownerPhone": "656465656",
+    "priceChangeLog": [],
+    "status": "active",
+    "statusChangedAt": "2026-09-15T15:33:23.411Z"
+  }
+]
