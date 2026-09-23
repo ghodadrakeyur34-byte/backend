@@ -4,8 +4,11 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import admin from 'firebase-admin';
 import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.join(__dirname, '.env') });
+
 const isCloudFunctions = process.env.VERCEL || process.env.NETLIFY || process.env.K_SERVICE || process.env.FUNCTIONS_EMULATOR || process.env.FIREBASE_CONFIG;
 const DATA_DIR = isCloudFunctions ? path.join('/tmp', 'data') : path.join(__dirname, 'data');
 const LISTINGS_FILE = path.join(DATA_DIR, 'listings.json');
@@ -14,6 +17,17 @@ const REPORTS_FILE = path.join(DATA_DIR, 'reports.json');
 const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const INQUIRIES_FILE = path.join(DATA_DIR, 'inquiries.json');
+
+// TTL In-Memory Cache (4 seconds TTL for lightning fast responses while keeping multi-process sync)
+const CACHE_TTL_MS = 4000;
+const cacheTimestamps = {
+  listings: 0,
+  users: 0,
+  reports: 0,
+  categories: 0,
+  settings: 0,
+  inquiries: 0,
+};
 
 // Lazy-initialize Supabase Client
 let supabaseClient = null;
@@ -207,10 +221,6 @@ async function getSupabaseCollection(tableName, seedData = []) {
     }
 
     if (!data || data.length === 0) {
-      if (seedData && (Array.isArray(seedData) ? seedData.length > 0 : Object.keys(seedData).length > 0)) {
-        saveSupabaseCollection(tableName, seedData).catch(() => {});
-        return seedData;
-      }
       return Array.isArray(seedData) ? [] : seedData;
     }
 
@@ -247,10 +257,23 @@ async function saveSupabaseCollection(tableName, data) {
       if (rows.length > 0) {
         const { error } = await sb.from(tableName).upsert(rows);
         if (error) {
-          console.warn(`[Supabase] Upsert error for '${tableName}':`, error.message);
+          console.error(`[Supabase] Upsert error for '${tableName}':`, error.message);
           return false;
         }
       }
+
+      // Sync deletions for listings table so removed properties do not persist
+      if (tableName === 'listings') {
+        const currentIds = rows.map(r => r.id);
+        const { data: existingRows } = await sb.from('listings').select('id');
+        if (existingRows && existingRows.length > 0) {
+          const toDelete = existingRows.filter(er => !currentIds.includes(er.id)).map(er => er.id);
+          if (toDelete.length > 0) {
+            await sb.from('listings').delete().in('id', toDelete);
+          }
+        }
+      }
+
       return true;
     } else {
       const { error } = await sb.from(tableName).upsert({
@@ -259,13 +282,13 @@ async function saveSupabaseCollection(tableName, data) {
         updated_at: new Date().toISOString()
       });
       if (error) {
-        console.warn(`[Supabase] Upsert single error for '${tableName}':`, error.message);
+        console.error(`[Supabase] Upsert single error for '${tableName}':`, error.message);
         return false;
       }
       return true;
     }
   } catch (err) {
-    console.warn(`[Supabase] Write error for '${tableName}':`, err.message);
+    console.error(`[Supabase] Write error for '${tableName}':`, err.message);
     return false;
   }
 }
@@ -277,10 +300,6 @@ async function getFirestoreCollection(colName, seedData = []) {
   try {
     const snapshot = await db.collection(colName).get();
     if (snapshot.empty) {
-      if (seedData && (Array.isArray(seedData) ? seedData.length > 0 : Object.keys(seedData).length > 0)) {
-        saveFirestoreCollection(colName, seedData).catch(() => {});
-        return seedData;
-      }
       return Array.isArray(seedData) ? [] : seedData;
     }
 
@@ -324,123 +343,184 @@ async function saveFirestoreCollection(colName, data) {
 }
 
 export async function getListings() {
-  if (cache.listings !== null) return cache.listings;
-  const sbData = await getSupabaseCollection('listings', SEED);
+  const now = Date.now();
+  if (cache.listings !== null && now - cacheTimestamps.listings < CACHE_TTL_MS) {
+    return cache.listings;
+  }
+  const sbData = await getSupabaseCollection('listings', []);
   if (sbData !== null) {
     cache.listings = sbData;
+    cacheTimestamps.listings = now;
     return sbData;
   }
-  const fsData = await getFirestoreCollection('listings', SEED);
+  const fsData = await getFirestoreCollection('listings', []);
   const data = fsData !== null ? fsData : await listingsStore.read();
   cache.listings = data;
+  cacheTimestamps.listings = now;
   return data;
 }
 
 export async function saveListings(listings) {
   cache.listings = listings;
-  saveSupabaseCollection('listings', listings).catch(() => {});
+  cacheTimestamps.listings = Date.now();
+  try {
+    await saveSupabaseCollection('listings', listings);
+  } catch (err) {
+    console.error('[Supabase] Error saving listings:', err.message);
+  }
   saveFirestoreCollection('listings', listings).catch(() => {});
   await listingsStore.write(listings);
 }
 
 export async function getUsers() {
-  if (cache.users !== null) return cache.users;
+  const now = Date.now();
+  if (cache.users !== null && now - cacheTimestamps.users < CACHE_TTL_MS) {
+    return cache.users;
+  }
   const sbData = await getSupabaseCollection('users', []);
   if (sbData !== null) {
     cache.users = sbData;
+    cacheTimestamps.users = now;
     return sbData;
   }
   const fsData = await getFirestoreCollection('users', []);
   const data = fsData !== null ? fsData : await usersStore.read();
   cache.users = data;
+  cacheTimestamps.users = now;
   return data;
 }
 
 export async function saveUsers(users) {
   cache.users = users;
-  saveSupabaseCollection('users', users).catch(() => {});
+  cacheTimestamps.users = Date.now();
+  try {
+    await saveSupabaseCollection('users', users);
+  } catch (err) {
+    console.error('[Supabase] Error saving users:', err.message);
+  }
   saveFirestoreCollection('users', users).catch(() => {});
   await usersStore.write(users);
 }
 
 export async function getReports() {
-  if (cache.reports !== null) return cache.reports;
+  const now = Date.now();
+  if (cache.reports !== null && now - cacheTimestamps.reports < CACHE_TTL_MS) {
+    return cache.reports;
+  }
   const sbData = await getSupabaseCollection('reports', []);
   if (sbData !== null) {
     cache.reports = sbData;
+    cacheTimestamps.reports = now;
     return sbData;
   }
   const fsData = await getFirestoreCollection('reports', []);
   const data = fsData !== null ? fsData : await reportsStore.read();
   cache.reports = data;
+  cacheTimestamps.reports = now;
   return data;
 }
 
 export async function saveReports(reports) {
   cache.reports = reports;
-  saveSupabaseCollection('reports', reports).catch(() => {});
+  cacheTimestamps.reports = Date.now();
+  try {
+    await saveSupabaseCollection('reports', reports);
+  } catch (err) {
+    console.error('[Supabase] Error saving reports:', err.message);
+  }
   saveFirestoreCollection('reports', reports).catch(() => {});
   await reportsStore.write(reports);
 }
 
 export async function getCategories() {
-  if (cache.categories !== null) return cache.categories;
+  const now = Date.now();
+  if (cache.categories !== null && now - cacheTimestamps.categories < CACHE_TTL_MS) {
+    return cache.categories;
+  }
   const sbData = await getSupabaseCollection('categories', CATEGORIES_SEED);
   if (sbData !== null) {
     cache.categories = sbData;
+    cacheTimestamps.categories = now;
     return sbData;
   }
   const fsData = await getFirestoreCollection('categories', CATEGORIES_SEED);
   const data = fsData !== null ? fsData : await categoriesStore.read();
   cache.categories = data;
+  cacheTimestamps.categories = now;
   return data;
 }
 
 export async function saveCategories(categories) {
   cache.categories = categories;
-  saveSupabaseCollection('categories', categories).catch(() => {});
+  cacheTimestamps.categories = Date.now();
+  try {
+    await saveSupabaseCollection('categories', categories);
+  } catch (err) {
+    console.error('[Supabase] Error saving categories:', err.message);
+  }
   saveFirestoreCollection('categories', categories).catch(() => {});
   await categoriesStore.write(categories);
 }
 
 export async function getSettings() {
-  if (cache.settings !== null) return cache.settings;
+  const now = Date.now();
+  if (cache.settings !== null && now - cacheTimestamps.settings < CACHE_TTL_MS) {
+    return cache.settings;
+  }
   const sbData = await getSupabaseCollection('settings', SETTINGS_SEED);
   if (sbData !== null) {
     cache.settings = sbData;
+    cacheTimestamps.settings = now;
     return sbData;
   }
   const fsData = await getFirestoreCollection('settings', SETTINGS_SEED);
   const data = fsData !== null ? fsData : await settingsStore.read();
   cache.settings = data;
+  cacheTimestamps.settings = now;
   return data;
 }
 
 export async function saveSettings(settings) {
   cache.settings = settings;
-  saveSupabaseCollection('settings', settings).catch(() => {});
+  cacheTimestamps.settings = Date.now();
+  try {
+    await saveSupabaseCollection('settings', settings);
+  } catch (err) {
+    console.error('[Supabase] Error saving settings:', err.message);
+  }
   saveFirestoreCollection('settings', settings).catch(() => {});
   await settingsStore.write(settings);
 }
 
 export async function getInquiries() {
-  if (cache.inquiries !== null) return cache.inquiries;
+  const now = Date.now();
+  if (cache.inquiries !== null && now - cacheTimestamps.inquiries < CACHE_TTL_MS) {
+    return cache.inquiries;
+  }
   const sbData = await getSupabaseCollection('inquiries', []);
   if (sbData !== null) {
     cache.inquiries = sbData;
+    cacheTimestamps.inquiries = now;
     return sbData;
   }
   const fsData = await getFirestoreCollection('inquiries', []);
   const data = fsData !== null ? fsData : await inquiriesStore.read();
   cache.inquiries = data;
+  cacheTimestamps.inquiries = now;
   return data;
 }
 
 export async function saveInquiries(inquiries) {
   cache.inquiries = inquiries;
-  saveSupabaseCollection('inquiries', inquiries).catch(() => {});
+  cacheTimestamps.inquiries = Date.now();
+  try {
+    await saveSupabaseCollection('inquiries', inquiries);
+  } catch (err) {
+    console.error('[Supabase] Error saving inquiries:', err.message);
+  }
   saveFirestoreCollection('inquiries', inquiries).catch(() => {});
   await inquiriesStore.write(inquiries);
 }
+
 
 

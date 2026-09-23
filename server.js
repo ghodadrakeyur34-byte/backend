@@ -1393,21 +1393,23 @@ app.get('/api/listings', async (req, res) => {
     if (headerPhone) requestingUserId = requestingUserId || headerPhone;
 
     const visibleListings = listings.filter(l => {
-      const isActive = (l.status || 'active') === 'active';
-      if (isActive) return true;
-      if (!requestingUserId) return false;
-      const reqIdLower = requestingUserId.toLowerCase();
-      const reqPhone = requestingUserId.replace(/\D/g, '').slice(-10);
-      return (
-        (l.ownerId && l.ownerId.toLowerCase() === reqIdLower) ||
-        (l.ownerEmail && l.ownerEmail.toLowerCase() === reqIdLower) ||
-        (l.contact?.email && l.contact.email.toLowerCase() === reqIdLower) ||
-        (reqPhone && reqPhone.length >= 7 && (
-          String(l.ownerId).replace(/\D/g, '').slice(-10) === reqPhone ||
-          String(l.ownerPhone || '').replace(/\D/g, '').slice(-10) === reqPhone ||
-          String(l.contact?.phone || '').replace(/\D/g, '').slice(-10) === reqPhone
-        ))
-      );
+      // If listing was rejected or deleted, only owner or admin can see it
+      if (l.status === 'rejected' || l.status === 'deleted') {
+        if (!requestingUserId) return false;
+        const reqIdLower = requestingUserId.toLowerCase();
+        const reqPhone = requestingUserId.replace(/\D/g, '').slice(-10);
+        return (
+          (l.ownerId && l.ownerId.toLowerCase() === reqIdLower) ||
+          (l.ownerEmail && l.ownerEmail.toLowerCase() === reqIdLower) ||
+          (l.contact?.email && l.contact.email.toLowerCase() === reqIdLower) ||
+          (reqPhone && reqPhone.length >= 7 && (
+            String(l.ownerId).replace(/\D/g, '').slice(-10) === reqPhone ||
+            String(l.ownerPhone || '').replace(/\D/g, '').slice(-10) === reqPhone ||
+            String(l.contact?.phone || '').replace(/\D/g, '').slice(-10) === reqPhone
+          ))
+        );
+      }
+      return true;
     });
 
     res.json(visibleListings);
@@ -1489,7 +1491,7 @@ app.post('/api/listings', listingCreationLimiter, authenticateUser, async (req, 
       ownerEmail: incomingOwnerEmail,
       ownerPhone: incomingOwnerPhone,
       priceChangeLog: [],
-      status: 'pending' // Moderation requirement: defaults to pending until approved by admin
+      status: 'active'
     };
 
     listings.unshift(newListing);
