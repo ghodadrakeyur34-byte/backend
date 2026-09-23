@@ -8,6 +8,7 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.117.1",
     "bcryptjs": "^3.0.2",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",

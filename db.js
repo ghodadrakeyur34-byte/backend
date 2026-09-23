@@ -1,7 +1,9 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 import admin from 'firebase-admin';
+import { createClient } from '@supabase/supabase-js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isCloudFunctions = process.env.VERCEL || process.env.NETLIFY || process.env.K_SERVICE || process.env.FUNCTIONS_EMULATOR || process.env.FIREBASE_CONFIG;
@@ -12,6 +14,40 @@ const REPORTS_FILE = path.join(DATA_DIR, 'reports.json');
 const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const INQUIRIES_FILE = path.join(DATA_DIR, 'inquiries.json');
+
+// Lazy-initialize Supabase Client
+let supabaseClient = null;
+let supabaseAvailable = null; // null = untried, true = working, false = disabled
+
+export function getSupabaseInstance() {
+  if (supabaseAvailable === false) return null;
+  if (supabaseClient) return supabaseClient;
+
+  const supabaseUrl = process.env.SUPABASE_URL || 'https://osowusrcwpqqxhcjzaom.supabase.co';
+  const supabaseKey = process.env.SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseKey) {
+    supabaseAvailable = false;
+    return null;
+  }
+
+  try {
+    supabaseClient = createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      }
+    });
+    supabaseAvailable = true;
+    console.log(`[Supabase] Successfully connected to ${supabaseUrl}`);
+    return supabaseClient;
+  } catch (err) {
+    console.warn('[Supabase] Initialization error (falling back):', err.message);
+    supabaseAvailable = false;
+    supabaseClient = null;
+    return null;
+  }
+}
 
 // Lazy-initialize Firebase Admin Firestore
 let firestoreDb = null;
@@ -159,6 +195,81 @@ const cache = {
   inquiries: null,
 };
 
+// Supabase Helper Functions
+async function getSupabaseCollection(tableName, seedData = []) {
+  const sb = getSupabaseInstance();
+  if (!sb) return null;
+  try {
+    const { data, error } = await sb.from(tableName).select('*');
+    if (error) {
+      console.warn(`[Supabase] Query error for '${tableName}':`, error.message);
+      return null;
+    }
+
+    if (!data || data.length === 0) {
+      if (seedData && (Array.isArray(seedData) ? seedData.length > 0 : Object.keys(seedData).length > 0)) {
+        saveSupabaseCollection(tableName, seedData).catch(() => {});
+        return seedData;
+      }
+      return Array.isArray(seedData) ? [] : seedData;
+    }
+
+    if (Array.isArray(seedData)) {
+      return data.map(row => (row.data ? { ...row.data, id: row.id || row.data.id || row.email, email: row.email || (row.data && row.data.email) } : row));
+    } else {
+      const doc = data.find(r => r.id === 'main') || data[0];
+      return doc ? (doc.data || doc) : seedData;
+    }
+  } catch (err) {
+    console.warn(`[Supabase] Read error for '${tableName}':`, err.message);
+    return null;
+  }
+}
+
+async function saveSupabaseCollection(tableName, data) {
+  const sb = getSupabaseInstance();
+  if (!sb) return false;
+  try {
+    if (Array.isArray(data)) {
+      const rows = data.map(item => {
+        const row = {
+          data: item,
+          updated_at: new Date().toISOString()
+        };
+        if (tableName === 'users') {
+          row.email = String(item.email || item.id);
+        } else {
+          row.id = String(item.id || item.email || item.phone || crypto.randomUUID());
+        }
+        return row;
+      });
+
+      if (rows.length > 0) {
+        const { error } = await sb.from(tableName).upsert(rows);
+        if (error) {
+          console.warn(`[Supabase] Upsert error for '${tableName}':`, error.message);
+          return false;
+        }
+      }
+      return true;
+    } else {
+      const { error } = await sb.from(tableName).upsert({
+        id: 'main',
+        data: data,
+        updated_at: new Date().toISOString()
+      });
+      if (error) {
+        console.warn(`[Supabase] Upsert single error for '${tableName}':`, error.message);
+        return false;
+      }
+      return true;
+    }
+  } catch (err) {
+    console.warn(`[Supabase] Write error for '${tableName}':`, err.message);
+    return false;
+  }
+}
+
 // Firestore Helper Functions
 async function getFirestoreCollection(colName, seedData = []) {
   const db = getFirestoreInstance();
@@ -214,6 +325,11 @@ async function saveFirestoreCollection(colName, data) {
 
 export async function getListings() {
   if (cache.listings !== null) return cache.listings;
+  const sbData = await getSupabaseCollection('listings', SEED);
+  if (sbData !== null) {
+    cache.listings = sbData;
+    return sbData;
+  }
   const fsData = await getFirestoreCollection('listings', SEED);
   const data = fsData !== null ? fsData : await listingsStore.read();
   cache.listings = data;
@@ -222,12 +338,18 @@ export async function getListings() {
 
 export async function saveListings(listings) {
   cache.listings = listings;
+  saveSupabaseCollection('listings', listings).catch(() => {});
   saveFirestoreCollection('listings', listings).catch(() => {});
   await listingsStore.write(listings);
 }
 
 export async function getUsers() {
   if (cache.users !== null) return cache.users;
+  const sbData = await getSupabaseCollection('users', []);
+  if (sbData !== null) {
+    cache.users = sbData;
+    return sbData;
+  }
   const fsData = await getFirestoreCollection('users', []);
   const data = fsData !== null ? fsData : await usersStore.read();
   cache.users = data;
@@ -236,12 +358,18 @@ export async function getUsers() {
 
 export async function saveUsers(users) {
   cache.users = users;
+  saveSupabaseCollection('users', users).catch(() => {});
   saveFirestoreCollection('users', users).catch(() => {});
   await usersStore.write(users);
 }
 
 export async function getReports() {
   if (cache.reports !== null) return cache.reports;
+  const sbData = await getSupabaseCollection('reports', []);
+  if (sbData !== null) {
+    cache.reports = sbData;
+    return sbData;
+  }
   const fsData = await getFirestoreCollection('reports', []);
   const data = fsData !== null ? fsData : await reportsStore.read();
   cache.reports = data;
@@ -250,12 +378,18 @@ export async function getReports() {
 
 export async function saveReports(reports) {
   cache.reports = reports;
+  saveSupabaseCollection('reports', reports).catch(() => {});
   saveFirestoreCollection('reports', reports).catch(() => {});
   await reportsStore.write(reports);
 }
 
 export async function getCategories() {
   if (cache.categories !== null) return cache.categories;
+  const sbData = await getSupabaseCollection('categories', CATEGORIES_SEED);
+  if (sbData !== null) {
+    cache.categories = sbData;
+    return sbData;
+  }
   const fsData = await getFirestoreCollection('categories', CATEGORIES_SEED);
   const data = fsData !== null ? fsData : await categoriesStore.read();
   cache.categories = data;
@@ -264,12 +398,18 @@ export async function getCategories() {
 
 export async function saveCategories(categories) {
   cache.categories = categories;
+  saveSupabaseCollection('categories', categories).catch(() => {});
   saveFirestoreCollection('categories', categories).catch(() => {});
   await categoriesStore.write(categories);
 }
 
 export async function getSettings() {
   if (cache.settings !== null) return cache.settings;
+  const sbData = await getSupabaseCollection('settings', SETTINGS_SEED);
+  if (sbData !== null) {
+    cache.settings = sbData;
+    return sbData;
+  }
   const fsData = await getFirestoreCollection('settings', SETTINGS_SEED);
   const data = fsData !== null ? fsData : await settingsStore.read();
   cache.settings = data;
@@ -278,12 +418,18 @@ export async function getSettings() {
 
 export async function saveSettings(settings) {
   cache.settings = settings;
+  saveSupabaseCollection('settings', settings).catch(() => {});
   saveFirestoreCollection('settings', settings).catch(() => {});
   await settingsStore.write(settings);
 }
 
 export async function getInquiries() {
   if (cache.inquiries !== null) return cache.inquiries;
+  const sbData = await getSupabaseCollection('inquiries', []);
+  if (sbData !== null) {
+    cache.inquiries = sbData;
+    return sbData;
+  }
   const fsData = await getFirestoreCollection('inquiries', []);
   const data = fsData !== null ? fsData : await inquiriesStore.read();
   cache.inquiries = data;
@@ -292,7 +438,9 @@ export async function getInquiries() {
 
 export async function saveInquiries(inquiries) {
   cache.inquiries = inquiries;
+  saveSupabaseCollection('inquiries', inquiries).catch(() => {});
   saveFirestoreCollection('inquiries', inquiries).catch(() => {});
   await inquiriesStore.write(inquiries);
 }
+
 
