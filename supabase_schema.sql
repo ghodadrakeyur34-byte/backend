@@ -78,3 +78,35 @@ GRANT ALL ON TABLE public.reports TO anon, authenticated, service_role;
 GRANT ALL ON TABLE public.inquiries TO anon, authenticated, service_role;
 GRANT ALL ON TABLE public.categories TO anon, authenticated, service_role;
 GRANT ALL ON TABLE public.settings TO anon, authenticated, service_role;
+
+-- ==========================================================
+-- 7. Supabase Storage Bucket for User Uploads
+-- ==========================================================
+-- Creates the public 'property-images' storage bucket if it does not exist
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'property-images',
+  'property-images',
+  true,
+  10485760,
+  ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+)
+ON CONFLICT (id) DO UPDATE SET
+  public = true,
+  file_size_limit = 10485760,
+  allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+-- Allow public read access to property-images
+CREATE POLICY "Public Read Access"
+ON storage.objects FOR SELECT
+USING (bucket_id = 'property-images');
+
+-- Allow backend and authenticated service to insert/update/delete
+CREATE POLICY "Allow Uploads"
+ON storage.objects FOR INSERT
+WITH CHECK (bucket_id = 'property-images');
+
+CREATE POLICY "Allow Deletes"
+ON storage.objects FOR DELETE
+USING (bucket_id = 'property-images');
+

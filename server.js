@@ -27,14 +27,12 @@ import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
 import { sendVerificationEmail } from './emailService.js';
 import { getListings, saveListings, getUsers, saveUsers, getReports, saveReports, getCategories, saveCategories, getSettings, saveSettings, getInquiries, saveInquiries } from './db.js';
+import { uploadImageToSupabase, processListingImages, deleteStorageImage } from './storageService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const isServerlessEnv = process.env.VERCEL || process.env.NETLIFY || process.env.K_SERVICE || process.env.FUNCTIONS_EMULATOR;
 const UPLOADS_DIR = isServerlessEnv ? path.join('/tmp', 'uploads') : path.join(__dirname, 'uploads');
-
-// Ensure isolated uploads directory exists
-fs.mkdir(UPLOADS_DIR, { recursive: true }).catch((err) => console.warn('Warning creating uploads dir:', err.message));
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -456,7 +454,7 @@ async function validateImagesArray(images) {
 
 // ===== FILE UPLOAD ROUTE =====
 
-// Dedicated Upload endpoint with content magic-bytes validation
+// Dedicated Upload endpoint: uploads directly to Supabase Cloud Storage (never stored on backend server local disk)
 app.post('/api/upload', upload.array('files', 5), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
@@ -466,22 +464,14 @@ app.post('/api/upload', upload.array('files', 5), async (req, res) => {
     const uploadedUrls = [];
 
     for (const file of req.files) {
-      const validation = await validateImageContent(file.buffer);
-      if (!validation.valid) {
-        return res.status(400).json({ error: validation.error });
-      }
-
-      const fileName = `${crypto.randomUUID()}.${validation.ext}`;
-      const filePath = path.join(UPLOADS_DIR, fileName);
-
-      await fs.writeFile(filePath, file.buffer);
-      uploadedUrls.push(`/uploads/${fileName}`);
+      const publicUrl = await uploadImageToSupabase(file.buffer, 'upload');
+      uploadedUrls.push(publicUrl);
     }
 
     res.json({ success: true, urls: uploadedUrls });
   } catch (err) {
     console.error('Upload error:', err);
-    res.status(500).json({ error: 'Server error processing file upload.' });
+    res.status(500).json({ error: err.message || 'Server error processing file upload.' });
   }
 });
 
@@ -1008,11 +998,8 @@ app.post('/api/admin/listings', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Title, price, area, and city are required.' });
     }
 
-    // Validate images content magic bytes
-    const imgCheck = await validateImagesArray(images);
-    if (!imgCheck.valid) {
-      return res.status(400).json({ error: imgCheck.error });
-    }
+    // Upload images directly to Supabase Storage and obtain public URLs (never local disk)
+    const uploadedImages = await processListingImages(images, 'admin_prop');
 
     const cityCoords = {
       Veraval: { lat: 20.9082, lng: 70.3703 },
@@ -1039,7 +1026,7 @@ app.post('/api/admin/listings', requireAdmin, async (req, res) => {
       city: cleanText(city),
       lat: finalLat,
       lng: finalLng,
-      images: images || [],
+      images: uploadedImages,
       contact: contact ? { name: cleanText(contact.name || 'Admin'), phone: cleanText(contact.phone || '') } : { name: 'Admin', phone: '' },
       date: new Date().toISOString().split('T')[0],
       ownerId: null,
@@ -1098,6 +1085,9 @@ app.put('/api/admin/listings/:id', requireAdmin, async (req, res) => {
 
     // Merge updates (don't allow changing id)
     const { id: _ignoreId, ...safeUpdates } = updates;
+    if (safeUpdates.images && Array.isArray(safeUpdates.images)) {
+      safeUpdates.images = await processListingImages(safeUpdates.images, 'admin_prop');
+    }
     listings[listingIndex] = { ...listings[listingIndex], ...safeUpdates };
     await saveListings(listings);
 
@@ -1112,6 +1102,12 @@ app.delete('/api/admin/listings/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const listings = await getListings();
+    const listingToDelete = listings.find(l => l.id === id);
+    if (listingToDelete && Array.isArray(listingToDelete.images)) {
+      for (const imgUrl of listingToDelete.images) {
+        deleteStorageImage(imgUrl).catch(() => {});
+      }
+    }
     const updated = listings.filter(l => l.id !== id);
 
     if (updated.length === listings.length) {
@@ -1231,9 +1227,17 @@ app.delete('/api/admin/users/:email', requireAdmin, async (req, res) => {
     users = users.filter(u => u.email.toLowerCase() !== targetEmail);
     await saveUsers(users);
 
-    // 2. Remove all listings created by this user
+    // 2. Remove all listings created by this user and clean up their images in Supabase Storage
     let listings = await getListings();
     const initialListingsCount = listings.length;
+    const userListings = listings.filter(l => l.ownerId === userPhone || l.contact?.phone === userPhone || l.ownerEmail === targetEmail);
+    for (const l of userListings) {
+      if (Array.isArray(l.images)) {
+        for (const imgUrl of l.images) {
+          deleteStorageImage(imgUrl).catch(() => {});
+        }
+      }
+    }
     listings = listings.filter(l => l.ownerId !== userPhone && l.contact?.phone !== userPhone && l.ownerEmail !== targetEmail);
     const deletedListingsCount = initialListingsCount - listings.length;
     await saveListings(listings);
@@ -1441,11 +1445,8 @@ app.post('/api/listings', listingCreationLimiter, authenticateUser, async (req, 
       return res.status(400).json({ error: 'Missing required property details.' });
     }
 
-    // Validate images content magic bytes
-    const imgCheck = await validateImagesArray(images);
-    if (!imgCheck.valid) {
-      return res.status(400).json({ error: imgCheck.error });
-    }
+    // Upload images directly to Supabase Storage and obtain public URLs (never stored on local disk)
+    const uploadedImages = await processListingImages(images, 'prop');
 
     const cityCoords = {
       Veraval: { lat: 20.9082, lng: 70.3703 },
@@ -1480,7 +1481,7 @@ app.post('/api/listings', listingCreationLimiter, authenticateUser, async (req, 
       city: cleanText(city),
       lat: finalLat,
       lng: finalLng,
-      images: images || [],
+      images: uploadedImages,
       contact: {
         name: cleanText(contact.name),
         phone: cleanText(contact.phone),
@@ -1521,6 +1522,13 @@ app.delete('/api/listings/:id', authenticateUser, async (req, res) => {
     const isOwner = checkIsListingOwner(listing, req.user, req.isAdmin);
     if (!isOwner) {
       return res.status(403).json({ error: 'Forbidden. You do not own this listing.' });
+    }
+
+    // Delete associated images from Supabase Storage
+    if (Array.isArray(listing.images)) {
+      for (const imgUrl of listing.images) {
+        deleteStorageImage(imgUrl).catch(() => {});
+      }
     }
 
     // Perform deletion
