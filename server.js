@@ -26,7 +26,7 @@ import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
 import { sendVerificationEmail } from './emailService.js';
-import { getListings, saveListings, getUsers, saveUsers, getReports, saveReports, getCategories, saveCategories, getSettings, saveSettings, getInquiries, saveInquiries } from './db.js';
+import { getListings, saveListings, insertListing, updateListing, deleteListing, getUsers, saveUsers, getReports, saveReports, getCategories, saveCategories, getSettings, saveSettings, getInquiries, saveInquiries, insertInquiry } from './db.js';
 import { uploadImageToSupabase, processListingImages, deleteStorageImage } from './storageService.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1022,7 +1022,6 @@ app.post('/api/admin/listings', requireAdmin, async (req, res) => {
     const finalLat = lat !== undefined && lat !== null && !isNaN(Number(lat)) ? Number(lat) : defaultCoord.lat;
     const finalLng = lng !== undefined && lng !== null && !isNaN(Number(lng)) ? Number(lng) : defaultCoord.lng;
 
-    const listings = await getListings();
     const id = 'p' + Date.now() + Math.random().toString(36).slice(2, 6);
 
     const newListing = {
@@ -1045,10 +1044,10 @@ app.post('/api/admin/listings', requireAdmin, async (req, res) => {
       status: status || 'active' // Admin listings default to active
     };
 
-    listings.unshift(newListing);
-    await saveListings(listings);
+    // Write directly to external database (Supabase)
+    const savedListing = await insertListing(newListing);
 
-    res.status(201).json({ success: true, listing: newListing });
+    res.status(201).json({ success: true, listing: savedListing });
   } catch (err) {
     console.error('Error creating admin listing:', err);
     res.status(500).json({ error: 'Server error creating listing.' });
@@ -1064,19 +1063,16 @@ app.put('/api/admin/listings/:id/status', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Invalid status. Use: active, rejected, sold, inactive, pending.' });
     }
 
-    const listings = await getListings();
-    const listing = listings.find(l => l.id === id);
+    const updated = await updateListing(id, {
+      status,
+      statusChangedAt: new Date().toISOString()
+    });
 
-    if (!listing) {
+    res.json({ success: true, listing: updated });
+  } catch (err) {
+    if (err.message && err.message.includes('not found')) {
       return res.status(404).json({ error: 'Listing not found.' });
     }
-
-    listing.status = status;
-    listing.statusChangedAt = new Date().toISOString();
-    await saveListings(listings);
-
-    res.json({ success: true, listing });
-  } catch (err) {
     console.error('Error updating listing status:', err);
     res.status(500).json({ error: 'Server error updating listing status.' });
   }
@@ -1087,23 +1083,18 @@ app.put('/api/admin/listings/:id', requireAdmin, async (req, res) => {
     const { id } = req.params;
     const updates = req.body;
 
-    const listings = await getListings();
-    const listingIndex = listings.findIndex(l => l.id === id);
-
-    if (listingIndex === -1) {
-      return res.status(404).json({ error: 'Listing not found.' });
-    }
-
     // Merge updates (don't allow changing id)
     const { id: _ignoreId, ...safeUpdates } = updates;
     if (safeUpdates.images && Array.isArray(safeUpdates.images)) {
       safeUpdates.images = await processListingImages(safeUpdates.images, 'admin_prop');
     }
-    listings[listingIndex] = { ...listings[listingIndex], ...safeUpdates };
-    await saveListings(listings);
 
-    res.json({ success: true, listing: listings[listingIndex] });
+    const updated = await updateListing(id, safeUpdates);
+    res.json({ success: true, listing: updated });
   } catch (err) {
+    if (err.message && err.message.includes('not found')) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
     console.error('Error updating listing:', err);
     res.status(500).json({ error: 'Server error updating listing.' });
   }
@@ -1114,18 +1105,17 @@ app.delete('/api/admin/listings/:id', requireAdmin, async (req, res) => {
     const { id } = req.params;
     const listings = await getListings();
     const listingToDelete = listings.find(l => l.id === id);
-    if (listingToDelete && Array.isArray(listingToDelete.images)) {
+    if (!listingToDelete) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    if (Array.isArray(listingToDelete.images)) {
       for (const imgUrl of listingToDelete.images) {
         deleteStorageImage(imgUrl).catch(() => {});
       }
     }
-    const updated = listings.filter(l => l.id !== id);
 
-    if (updated.length === listings.length) {
-      return res.status(404).json({ error: 'Listing not found.' });
-    }
-
-    await saveListings(updated);
+    await deleteListing(id);
     res.json({ success: true, message: 'Listing deleted successfully.' });
   } catch (err) {
     console.error('Error deleting listing:', err);
@@ -1471,7 +1461,6 @@ app.post('/api/listings', listingCreationLimiter, authenticateUser, async (req, 
     const finalLat = incomingLat !== undefined && incomingLat !== null && !isNaN(Number(incomingLat)) ? Number(incomingLat) : defaultCoord.lat;
     const finalLng = incomingLng !== undefined && incomingLng !== null && !isNaN(Number(incomingLng)) ? Number(incomingLng) : defaultCoord.lng;
 
-    const listings = await getListings();
     const id = 'p' + Date.now() + Math.random().toString(36).slice(2, 6);
 
     // Extract owner identification from authenticated session or payload
@@ -1506,10 +1495,10 @@ app.post('/api/listings', listingCreationLimiter, authenticateUser, async (req, 
       status: 'active'
     };
 
-    listings.unshift(newListing);
-    await saveListings(listings);
+    // Write directly to external database (Supabase)
+    const savedListing = await insertListing(newListing);
 
-    res.status(201).json(newListing);
+    res.status(201).json(savedListing);
   } catch (err) {
     console.error('Error creating listing:', err);
     res.status(500).json({ error: 'Server error creating listing.' });
@@ -1521,13 +1510,11 @@ app.delete('/api/listings/:id', authenticateUser, async (req, res) => {
   try {
     const { id } = req.params;
     const listings = await getListings();
-    const listingIndex = listings.findIndex((l) => l.id === id);
+    const listing = listings.find((l) => l.id === id);
 
-    if (listingIndex === -1) {
+    if (!listing) {
       return res.status(404).json({ error: 'Listing not found.' });
     }
-
-    const listing = listings[listingIndex];
     
     // IDOR Check: Ensure user owns listing or is admin
     const isOwner = checkIsListingOwner(listing, req.user, req.isAdmin);
@@ -1542,9 +1529,8 @@ app.delete('/api/listings/:id', authenticateUser, async (req, res) => {
       }
     }
 
-    // Perform deletion
-    const updated = listings.filter((l) => l.id !== id);
-    await saveListings(updated);
+    // Perform deletion directly in external database
+    await deleteListing(id);
 
     res.json({ success: true, message: 'Listing deleted successfully.' });
   } catch (err) {
@@ -1564,13 +1550,11 @@ app.put('/api/listings/:id/price', authenticateUser, async (req, res) => {
     }
 
     const listings = await getListings();
-    const listingIndex = listings.findIndex((l) => l.id === id);
+    const listing = listings.find((l) => l.id === id);
 
-    if (listingIndex === -1) {
+    if (!listing) {
       return res.status(404).json({ error: 'Listing not found.' });
     }
-
-    const listing = listings[listingIndex];
 
     // IDOR Check: Ensure user owns listing or is admin
     const isOwner = checkIsListingOwner(listing, req.user, req.isAdmin);
@@ -1587,16 +1571,16 @@ app.put('/api/listings/:id/price', authenticateUser, async (req, res) => {
       });
     }
 
-    // Perform update
-    listing.price = Number(price);
-    listing.priceChangeLog = [...log, new Date().toISOString()];
-
-    await saveListings(listings);
+    // Perform update directly in external database
+    const updated = await updateListing(id, {
+      price: Number(price),
+      priceChangeLog: [...log, new Date().toISOString()]
+    });
 
     res.json({
       success: true,
       message: 'Price updated successfully.',
-      listing
+      listing: updated
     });
   } catch (err) {
     console.error('Error updating price:', err);
@@ -1664,10 +1648,9 @@ app.post('/api/inquiries', async (req, res) => {
       status: 'pending' // 'pending' | 'resolved'
     };
 
-    inquiries.unshift(newInquiry);
-    await saveInquiries(inquiries);
+    const savedInquiry = await insertInquiry(newInquiry);
 
-    res.json({ success: true, message: 'Your inquiry has been submitted successfully.', inquiry: newInquiry });
+    res.json({ success: true, message: 'Your inquiry has been submitted successfully.', inquiry: savedInquiry });
   } catch (err) {
     console.error('Error submitting inquiry:', err);
     res.status(500).json({ error: 'Server error submitting inquiry.' });
