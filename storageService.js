@@ -103,9 +103,10 @@ export async function uploadImageToSupabase(buffer, prefix = 'prop') {
     });
 
   if (uploadError) {
-    console.error('[Storage] Supabase upload failed:', uploadError);
-    throw new Error(`Failed to upload to Supabase Storage: ${uploadError.message}`);
+    console.error('[Storage] Supabase upload failed:', uploadError.message);
+    throw new Error('Failed to upload image to storage.');
   }
+
 
   const { data: urlData } = supabase.storage
     .from(STORAGE_BUCKET)

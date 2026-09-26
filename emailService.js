@@ -8,15 +8,13 @@ try {
   }
 } catch (e) {}
 
-const GMAIL_USER_FALLBACK = 'marimilkat@gmail.com';
-const GMAIL_PASS_FALLBACK = 'gsxa gfma vwsi fbrm';
-
 let primaryTransporter = null;
 let fallbackTransporter = null;
 
 function buildTransporter(port, secure) {
-  const gmailUser = (process.env.GMAIL_USER || GMAIL_USER_FALLBACK).trim();
-  const gmailPass = (process.env.GMAIL_PASS || GMAIL_PASS_FALLBACK).replace(/\s+/g, '');
+  const gmailUser = (process.env.GMAIL_USER || '').trim();
+  const gmailPass = (process.env.GMAIL_PASS || '').replace(/\s+/g, '');
+
 
   if (gmailUser && gmailPass) {
     return nodemailer.createTransport({
@@ -120,7 +118,7 @@ async function sendViaBrevo(toEmail, otpCode, htmlContent) {
   const apiKey = process.env.BREVO_API_KEY;
   if (!apiKey) return null;
 
-  const gmailUser = (process.env.GMAIL_USER || GMAIL_USER_FALLBACK).trim();
+  const gmailUser = (process.env.GMAIL_USER || 'support@marimilkat.com').trim();
   const senderEmail = process.env.BREVO_FROM || gmailUser;
 
   const res = await fetch('https://api.brevo.com/v3/smtp/email', {
@@ -151,7 +149,7 @@ async function sendViaSendGrid(toEmail, otpCode, htmlContent) {
   const apiKey = process.env.SENDGRID_API_KEY;
   if (!apiKey) return null;
 
-  const gmailUser = (process.env.GMAIL_USER || GMAIL_USER_FALLBACK).trim();
+  const gmailUser = (process.env.GMAIL_USER || 'support@marimilkat.com').trim();
   const fromEmail = process.env.SENDGRID_FROM || gmailUser;
 
   const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
@@ -177,12 +175,11 @@ async function sendViaSendGrid(toEmail, otpCode, htmlContent) {
 
 export async function sendVerificationEmail(toEmail, otpCode) {
   try {
-    console.log(`\n======================================================`);
-    console.log(`[EMAIL DISPATCH] ⚡ OTP Code: ${otpCode} -> ${toEmail}`);
-    console.log(`======================================================\n`);
+    console.log(`[Email Service] Dispatching verification OTP to ${toEmail}`);
 
-    const gmailUser = (process.env.GMAIL_USER || GMAIL_USER_FALLBACK).trim();
+    const gmailUser = (process.env.GMAIL_USER || 'support@marimilkat.com').trim();
     const fromAddress = process.env.SMTP_FROM || `"Mari Milkat" <${gmailUser}>`;
+
 
     const htmlContent = `
       <!DOCTYPE html>
@@ -310,8 +307,9 @@ export async function sendVerificationEmail(toEmail, otpCode) {
     console.warn(`[Email Service] ⚠️ Notice: Render blocks raw SMTP ports (465/587). Add RESEND_API_KEY or BREVO_API_KEY in Render Environment Variables for instant HTTPS email delivery.`);
     return { success: false, error: 'SMTP ports blocked on host. Use HTTPS API (Resend/Brevo).' };
   } catch (err) {
-    console.error('[Email Service] ❌ Error sending email:', err.message);
-    return { success: false, error: err.message };
+    console.error('[Email Service] Error sending email:', err.message);
+    return { success: false, error: 'Failed to deliver email.' };
   }
+
 }
 

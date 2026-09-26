@@ -49,8 +49,8 @@ const PORT = process.env.PORT || 5000;
 // ===== SECRETS & CONFIGURATION =====
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'marimilkatadmin@gmail.com';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin@MariMilkat';
-const ADMIN_TOKEN = crypto.randomBytes(48).toString('hex');
-console.log('[Security] Admin token generated (use x-admin-token header):', ADMIN_TOKEN);
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
+
 
 const BCRYPT_ROUNDS = 10;
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
@@ -172,7 +172,16 @@ app.get('/api/csrf-token', (req, res) => {
 });
 
 // ===== RATE LIMITERS =====
+const adminAuthLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // strict limit: max 5 admin attempts per 15 minutes
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many admin attempts. Please try again after 15 minutes.' },
+});
+
 const authLimiter = rateLimit({
+
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 20, // 20 requests per 15 minutes per IP
   standardHeaders: true,
@@ -282,16 +291,24 @@ function isAdmin(req, res, next) {
     return res.status(401).json({ error: 'Unauthorized. Token missing.' });
   }
 
-  // Support legacy static ADMIN_TOKEN for backwards compatibility
-  if (token === ADMIN_TOKEN) {
-    req.user = { email: ADMIN_EMAIL, role: 'admin', isAdmin: true };
-    req.isAdmin = true;
-    return next();
+  // Check static ADMIN_TOKEN if explicitly set in environment using timing-safe comparison
+  if (ADMIN_TOKEN && typeof token === 'string' && token.length === ADMIN_TOKEN.length) {
+    try {
+      const isMatch = crypto.timingSafeEqual(Buffer.from(token), Buffer.from(ADMIN_TOKEN));
+      if (isMatch) {
+        req.user = { email: ADMIN_EMAIL, role: 'admin', isAdmin: true };
+        req.isAdmin = true;
+        return next();
+      }
+    } catch (e) {}
   }
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    if (decoded.role === 'admin' || decoded.isAdmin === true || (decoded.email && decoded.email.toLowerCase() === ADMIN_EMAIL.toLowerCase())) {
+    const hasAdminRole = decoded.role === 'admin' || decoded.isAdmin === true;
+    const isMatchingEmail = decoded.email && decoded.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+
+    if (hasAdminRole && isMatchingEmail) {
       req.user = decoded;
       req.isAdmin = true;
       return next();
@@ -340,30 +357,20 @@ function setAuthCookies(res, accessToken, refreshToken, req) {
 function authenticateUser(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = (authHeader && authHeader.split(' ')[1]) || req.cookies?.accessToken;
-  const ownerPhoneHeader = req.headers['x-owner-phone'] || req.headers['owner-phone'];
 
-  if (token) {
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET);
-      req.user = decoded;
-      return next();
-    } catch (err) {
-      // Token invalid or expired
-    }
+  if (!token) {
+    return res.status(401).json({ error: 'Authentication required. Please sign in.' });
   }
 
-  // Fallback to owner phone / email header if provided (backwards compatibility)
-  if (ownerPhoneHeader) {
-    if (ownerPhoneHeader.includes('@')) {
-      req.user = { email: ownerPhoneHeader.trim().toLowerCase(), phone: '' };
-    } else {
-      req.user = { phone: ownerPhoneHeader.trim(), email: '' };
-    }
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
     return next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Authentication token is invalid or expired. Please sign in again.' });
   }
-
-  return res.status(401).json({ error: 'Authentication required. Please sign in.' });
 }
+
 
 /**
  * Robust check if the requesting user owns a listing or is admin.
@@ -455,7 +462,7 @@ async function validateImagesArray(images) {
 // ===== FILE UPLOAD ROUTE =====
 
 // Dedicated Upload endpoint: uploads directly to Supabase Cloud Storage (never stored on backend server local disk)
-app.post('/api/upload', upload.array('files', 5), async (req, res) => {
+app.post('/api/upload', authenticateUser, upload.array('files', 5), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'No files provided for upload.' });
@@ -470,10 +477,11 @@ app.post('/api/upload', upload.array('files', 5), async (req, res) => {
 
     res.json({ success: true, urls: uploadedUrls });
   } catch (err) {
-    console.error('Upload error:', err);
-    res.status(500).json({ error: err.message || 'Server error processing file upload.' });
+    console.error('[Upload error]', err);
+    res.status(500).json({ error: 'Failed to process file upload.' });
   }
 });
+
 
 // ===== AUTH ROUTES =====
 
@@ -578,15 +586,21 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
     const trimmedEmail = cleanText(email).toLowerCase();
 
-    const lowerPass = (password || '').toLowerCase();
-    const isPassMatch = password === ADMIN_PASSWORD || password === '@dmin@Milkat' || password === 'Admin@MariMilkat' || lowerPass === '@dmin@milkat' || lowerPass === 'admin@marimilkat';
+    let isPassMatch = false;
+    if (typeof password === 'string' && ADMIN_PASSWORD && password.length === ADMIN_PASSWORD.length) {
+      try {
+        isPassMatch = crypto.timingSafeEqual(Buffer.from(password), Buffer.from(ADMIN_PASSWORD));
+      } catch (e) {
+        isPassMatch = false;
+      }
+    }
 
     // Admin login intercept
     if (trimmedEmail === ADMIN_EMAIL.toLowerCase() && isPassMatch) {
       const adminUser = { email: ADMIN_EMAIL, name: 'Admin', role: 'admin', isAdmin: true };
       const accessToken = generateAccessToken(adminUser);
       const refreshToken = generateRefreshToken(adminUser);
-      setAuthCookies(res, accessToken, refreshToken);
+      setAuthCookies(res, accessToken, refreshToken, req);
       return res.json({
         success: true,
         isAdminLogin: true,
@@ -596,6 +610,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         accessToken
       });
     }
+
 
     const users = await getUsers();
     const user = users.find((u) => u.email === trimmedEmail);
@@ -699,15 +714,6 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
       }
     }
 
-    // 3. Fallback for local development simulation when GOOGLE_CLIENT_ID is not configured
-    if (!payload && !isProduction && typeof credential === 'string' && credential.startsWith('mockheader.')) {
-      try {
-        const parts = credential.split('.');
-        if (parts.length === 3) {
-          payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
-        }
-      } catch (e) {}
-    }
 
     if (!payload || !payload.email) {
       return res.status(401).json({ error: 'Invalid or expired Google token. Verification failed.' });
@@ -791,11 +797,15 @@ app.post('/api/auth/signup', signupLimiter, async (req, res) => {
     }
 
     const trimmedEmail = cleanText(email).toLowerCase();
+    if (trimmedEmail === ADMIN_EMAIL.toLowerCase()) {
+      return res.status(400).json({ error: 'This email is reserved and cannot be registered as a standard user.' });
+    }
     const trimmedName = cleanText(name);
     const trimmedPhone = cleanText(phone);
 
     let users = await getUsers();
     const existingUser = users.find((u) => u.email === trimmedEmail);
+
 
     if (existingUser) {
       if (existingUser.verified?.email) {
@@ -897,16 +907,28 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 // ===== ADMIN AUTH =====
-app.post('/api/admin/login', authLimiter, (req, res) => {
+app.post('/api/admin/login', adminAuthLimiter, (req, res) => {
   const { email, password } = req.body || {};
-  const lowerPass = (password || '').toLowerCase();
-  const validEmail = email && email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase();
-  const validPassword = password === ADMIN_PASSWORD || password === '@dmin@Milkat' || password === 'Admin@MariMilkat' || lowerPass === '@dmin@milkat' || lowerPass === 'admin@marimilkat';
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required.' });
+  }
+
+  const validEmail = email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase();
+  let validPassword = false;
+
+  if (typeof password === 'string' && ADMIN_PASSWORD && password.length === ADMIN_PASSWORD.length) {
+    try {
+      validPassword = crypto.timingSafeEqual(Buffer.from(password), Buffer.from(ADMIN_PASSWORD));
+    } catch (e) {
+      validPassword = false;
+    }
+  }
+
   if (validEmail && validPassword) {
     const adminUser = { email: ADMIN_EMAIL, name: 'Admin', role: 'admin', isAdmin: true };
     const accessToken = generateAccessToken(adminUser);
     const refreshToken = generateRefreshToken(adminUser);
-    setAuthCookies(res, accessToken, refreshToken);
+    setAuthCookies(res, accessToken, refreshToken, req);
 
     return res.json({
       success: true,
@@ -917,6 +939,7 @@ app.post('/api/admin/login', authLimiter, (req, res) => {
   }
   return res.status(401).json({ error: 'Invalid admin credentials.' });
 });
+
 
 // ===== ADMIN DASHBOARD =====
 app.get('/api/admin/stats', requireAdmin, async (req, res) => {
@@ -1718,6 +1741,43 @@ app.delete('/api/admin/inquiries/:id', requireAdmin, async (req, res) => {
   }
 });
 
+// 404 Handler for undefined API routes
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'Endpoint not found.' });
+});
+
+// Centralized Error Handler — hides debug error stack traces and internal messages
+app.use((err, req, res, next) => {
+  // Log real error internally on the server
+  console.error('[Server Error Handler]', err);
+
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  // Handle specific known safe errors
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Invalid JSON request payload.' });
+  }
+
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).json({ error: 'File size exceeds 10MB limit.' });
+  }
+
+  if (err.name === 'MulterError') {
+    return res.status(400).json({ error: 'File upload error.' });
+  }
+
+  if (err.name === 'UnauthorizedError') {
+    return res.status(401).json({ error: 'Invalid or missing authentication token.' });
+  }
+
+  // Generic secure error for anything else: never leak stack trace or internal error details
+  res.status(err.status || 500).json({
+    error: 'An internal server error occurred. Please try again later.'
+  });
+});
+
 // Start Server
 if (!process.env.VERCEL && !process.env.K_SERVICE && !process.env.FUNCTION_NAME) {
   app.listen(PORT, '0.0.0.0', () => {
@@ -1726,5 +1786,6 @@ if (!process.env.VERCEL && !process.env.K_SERVICE && !process.env.FUNCTION_NAME)
 }
 
 export { app };
+
 
 

@@ -11,10 +11,26 @@ services:
       - key: PORT
         value: 10000
       - key: ADMIN_EMAIL
-        value: marimilkatadmin@gmail.com
+        sync: false
       - key: ADMIN_PASSWORD
-        value: Admin@MariMilkat
+        sync: false
       - key: GMAIL_USER
-        value: marimilkat@gmail.com
+        sync: false
       - key: GMAIL_PASS
-        value: gsxagfmavwsifbrm
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: REFRESH_SECRET
+        generateValue: true
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: property-images
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false

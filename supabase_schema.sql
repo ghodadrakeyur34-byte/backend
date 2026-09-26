@@ -1,5 +1,5 @@
 -- ==========================================================
--- MARI MILKAT SUPABASE DATABASE SCHEMA
+-- MARI MILKAT SUPABASE DATABASE SCHEMA & SECURITY POLICIES
 -- Run this script in the Supabase SQL Editor:
 -- Dashboard -> SQL Editor -> New Query -> Run
 -- ==========================================================
@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS public.listings (
   updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Index for fast status and city lookups
+-- Index for fast status, city and owner lookups
 CREATE INDEX IF NOT EXISTS idx_listings_status ON public.listings ((data->>'status'));
 CREATE INDEX IF NOT EXISTS idx_listings_city ON public.listings ((data->>'city'));
 CREATE INDEX IF NOT EXISTS idx_listings_owner ON public.listings ((data->>'ownerEmail'));
@@ -61,23 +61,110 @@ CREATE TABLE IF NOT EXISTS public.settings (
   updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Disable Row Level Security (RLS) on these tables so that the backend server
--- and authenticated clients can read and write without policy blocks.
--- (Alternatively, you can keep RLS enabled if using the service_role key)
-ALTER TABLE public.listings DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.users DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.reports DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.inquiries DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.categories DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.settings DISABLE ROW LEVEL SECURITY;
+-- ==========================================================
+-- ROW LEVEL SECURITY (RLS) & ACCESS CONTROL
+-- ==========================================================
 
--- Grant permissions to public anon and service_role
-GRANT ALL ON TABLE public.listings TO anon, authenticated, service_role;
-GRANT ALL ON TABLE public.users TO anon, authenticated, service_role;
-GRANT ALL ON TABLE public.reports TO anon, authenticated, service_role;
-GRANT ALL ON TABLE public.inquiries TO anon, authenticated, service_role;
-GRANT ALL ON TABLE public.categories TO anon, authenticated, service_role;
-GRANT ALL ON TABLE public.settings TO anon, authenticated, service_role;
+-- Enable Row Level Security on all tables
+ALTER TABLE public.listings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.reports ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.inquiries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
+
+-- Revoke default public/anon access
+REVOKE ALL ON TABLE public.listings FROM anon;
+REVOKE ALL ON TABLE public.users FROM anon;
+REVOKE ALL ON TABLE public.reports FROM anon;
+REVOKE ALL ON TABLE public.inquiries FROM anon;
+REVOKE ALL ON TABLE public.categories FROM anon;
+REVOKE ALL ON TABLE public.settings FROM anon;
+
+-- Grant minimal necessary schema privileges
+GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+GRANT SELECT ON TABLE public.listings TO anon, authenticated;
+GRANT SELECT ON TABLE public.categories TO anon, authenticated;
+GRANT SELECT ON TABLE public.settings TO anon, authenticated;
+GRANT INSERT ON TABLE public.reports TO anon, authenticated;
+GRANT INSERT ON TABLE public.inquiries TO anon, authenticated;
+
+-- Drop existing legacy policies if any
+DROP POLICY IF EXISTS "Public Read Active Listings" ON public.listings;
+DROP POLICY IF EXISTS "Service Role Full Access Listings" ON public.listings;
+DROP POLICY IF EXISTS "Service Role Full Access Users" ON public.users;
+DROP POLICY IF EXISTS "Public Read Categories" ON public.categories;
+DROP POLICY IF EXISTS "Service Role Full Access Categories" ON public.categories;
+DROP POLICY IF EXISTS "Public Read Settings" ON public.settings;
+DROP POLICY IF EXISTS "Service Role Full Access Settings" ON public.settings;
+DROP POLICY IF EXISTS "Public Insert Reports" ON public.reports;
+DROP POLICY IF EXISTS "Service Role Full Access Reports" ON public.reports;
+DROP POLICY IF EXISTS "Public Insert Inquiries" ON public.inquiries;
+DROP POLICY IF EXISTS "Service Role Full Access Inquiries" ON public.inquiries;
+
+-- 1. Listings Policies
+-- Public can only view active listings (moderated)
+CREATE POLICY "Public Read Active Listings"
+ON public.listings FOR SELECT
+USING ((data->>'status') = 'active' OR auth.role() = 'service_role');
+
+-- Backend service role has unrestricted access
+CREATE POLICY "Service Role Full Access Listings"
+ON public.listings FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+-- 2. Users Policies (Strict: no direct public anon access to protect hashes and sensitive PII)
+CREATE POLICY "Service Role Full Access Users"
+ON public.users FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+-- 3. Categories Policies
+CREATE POLICY "Public Read Categories"
+ON public.categories FOR SELECT
+USING (true);
+
+CREATE POLICY "Service Role Full Access Categories"
+ON public.categories FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+-- 4. Settings Policies
+CREATE POLICY "Public Read Settings"
+ON public.settings FOR SELECT
+USING (true);
+
+CREATE POLICY "Service Role Full Access Settings"
+ON public.settings FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+-- 5. Reports Policies
+CREATE POLICY "Public Insert Reports"
+ON public.reports FOR INSERT
+WITH CHECK (true);
+
+CREATE POLICY "Service Role Full Access Reports"
+ON public.reports FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+-- 6. Inquiries Policies
+CREATE POLICY "Public Insert Inquiries"
+ON public.inquiries FOR INSERT
+WITH CHECK (true);
+
+CREATE POLICY "Service Role Full Access Inquiries"
+ON public.inquiries FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
 
 -- ==========================================================
 -- 7. Supabase Storage Bucket for User Uploads
@@ -96,17 +183,24 @@ ON CONFLICT (id) DO UPDATE SET
   file_size_limit = 10485760,
   allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
+-- Drop old insecure storage policies
+DROP POLICY IF EXISTS "Public Read Access" ON storage.objects;
+DROP POLICY IF EXISTS "Allow Uploads" ON storage.objects;
+DROP POLICY IF EXISTS "Allow Deletes" ON storage.objects;
+
 -- Allow public read access to property-images
 CREATE POLICY "Public Read Access"
 ON storage.objects FOR SELECT
 USING (bucket_id = 'property-images');
 
--- Allow backend and authenticated service to insert/update/delete
+-- Only backend service_role or authenticated users can upload
 CREATE POLICY "Allow Uploads"
 ON storage.objects FOR INSERT
+TO service_role, authenticated
 WITH CHECK (bucket_id = 'property-images');
 
+-- Only backend service_role or authenticated users can delete
 CREATE POLICY "Allow Deletes"
 ON storage.objects FOR DELETE
+TO service_role, authenticated
 USING (bucket_id = 'property-images');
-

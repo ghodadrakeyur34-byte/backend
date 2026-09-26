@@ -15,22 +15,6 @@
     }
   },
   {
-    "email": "k73234987@gmail.com",
-    "name": "keyur Keyur",
-    "phone": "+916353467756",
-    "passwordHash": "$2b$10$feHj3x/3wqAqFDKJ2pUb/.oBzj4hIAwgk7JEggzO703fHUGQV4jhG",
-    "createdAt": "2026-08-11T15:48:02.598Z",
-    "loggedInAt": "2026-08-11T15:48:02.598Z",
-    "status": "active",
-    "verified": {
-      "phone": false,
-      "email": false,
-      "id": false
-    },
-    "emailVerificationCode": "203602",
-    "emailVerificationExpires": 1786465976896
-  },
-  {
     "email": "ghodadrakeyur34@gmail.com",
     "name": "Ghodadrakeyur34",
     "phone": "",
