@@ -68,13 +68,24 @@ app.use(helmet());
 // Compression — Gzip/Brotli compress responses for optimal speed
 app.use(compression());
 
-// Health Check Endpoints for Render Deployment
-app.get('/', (req, res) => {
-  res.json({ status: 'ok', service: 'Mari Milkat Backend API' });
-});
+// ===== DEDICATED HEALTH CHECK ENDPOINTS =====
+// Ultra-lightweight routes responding with 200 OK immediately for monitors (Render, UptimeRobot, BetterStack, etc.)
+// Avoids heavy database queries, template rendering, or session overhead.
+const handleHealthCheck = (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
+};
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'healthy' });
+app.get('/health', handleHealthCheck);
+app.get('/healthz', handleHealthCheck);
+app.get('/api/health', handleHealthCheck);
+
+// Root lightweight status check
+app.get('/', (req, res) => {
+  res.status(200).json({ status: 'ok', service: 'Mari Milkat Backend API' });
 });
 
 // Cookie Parser
