@@ -17,4 +17,4 @@ services:
       - key: GMAIL_USER
         value: marimilkat@gmail.com
       - key: GMAIL_PASS
-        value: gsxagfmavwsifbrm
+      
