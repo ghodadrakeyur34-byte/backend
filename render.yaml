@@ -10,11 +10,5 @@ services:
         value: production
       - key: PORT
         value: 10000
-      - key: ADMIN_EMAIL
-        value: marimilkatadmin@gmail.com
-      - key: ADMIN_PASSWORD
-        value: Admin@MariMilkat
-      - key: GMAIL_USER
-        value: marimilkat@gmail.com
-      - key: GMAIL_PASS
+      
       
