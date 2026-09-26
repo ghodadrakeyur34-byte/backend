@@ -18,9 +18,3 @@ services:
         value: marimilkat@gmail.com
       - key: GMAIL_PASS
         value: gsxagfmavwsifbrm
-      - key: SUPABASE_URL
-        value: https://osowusrcwpqqxhcjzaom.supabase.co
-      - key: SUPABASE_KEY
-        value: sb_secret_GFznab4LrrKUNbroT2QRAA_4SITlv1A
-      - key: SUPABASE_STORAGE_BUCKET
-        value: property-images
