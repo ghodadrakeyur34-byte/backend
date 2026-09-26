@@ -26,7 +26,7 @@ import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
 import { sendVerificationEmail } from './emailService.js';
-import { getListings, saveListings, getUsers, saveUsers, getReports, saveReports, getCategories, saveCategories, getSettings, saveSettings, getInquiries, saveInquiries } from './db.js';
+import { getListings, saveListings, getUsers, saveUsers, getReports, saveReports, getCategories, saveCategories, getSettings, saveSettings, getInquiries, saveInquiries, checkStorageHealth } from './db.js';
 import { uploadImageToSupabase, processListingImages, deleteStorageImage } from './storageService.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1780,12 +1780,11 @@ app.use((err, req, res, next) => {
 
 // Start Server
 if (!process.env.VERCEL && !process.env.K_SERVICE && !process.env.FUNCTION_NAME) {
-  app.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, '0.0.0.0', async () => {
     console.log(`Server is running on 0.0.0.0:${PORT}`);
+    // Verify cloud storage connectivity at boot — alerts in logs if data won't persist
+    await checkStorageHealth();
   });
 }
 
 export { app };
-
-
-

@@ -41,6 +41,15 @@ export function getSupabaseInstance() {
   const supabaseKey = process.env.SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!supabaseKey) {
+    console.warn('[Supabase] ⚠️  No SUPABASE_KEY set — data will NOT persist across restarts on Render!');
+    supabaseAvailable = false;
+    return null;
+  }
+
+  // Real Supabase keys are long JWTs starting with 'eyJ' (100+ chars).
+  // Reject obviously invalid keys early to prevent silent fallback to ephemeral storage.
+  if (!supabaseKey.startsWith('eyJ') || supabaseKey.length < 100) {
+    console.error('[Supabase] ❌ SUPABASE_KEY appears invalid (expected a JWT starting with "eyJ...", got ' + supabaseKey.length + ' chars). Data will NOT persist!');
     supabaseAvailable = false;
     return null;
   }
@@ -53,7 +62,7 @@ export function getSupabaseInstance() {
       }
     });
     supabaseAvailable = true;
-    console.log(`[Supabase] Successfully connected to ${supabaseUrl}`);
+    console.log(`[Supabase] ✅ Client initialized for ${supabaseUrl}`);
     return supabaseClient;
   } catch (err) {
     console.warn('[Supabase] Initialization error (falling back):', err.message);
@@ -514,5 +523,39 @@ export async function saveInquiries(inquiries) {
   await inquiriesStore.write(inquiries);
 }
 
+/**
+ * Startup health check — call once during server boot to verify
+ * Supabase connectivity and warn loudly if data won't persist.
+ */
+export async function checkStorageHealth() {
+  const sb = getSupabaseInstance();
+  if (!sb) {
+    console.error('┌──────────────────────────────────────────────────────────┐');
+    console.error('│  ⚠️  SUPABASE IS NOT CONNECTED                          │');
+    console.error('│  Data is stored ONLY on the local filesystem.            │');
+    console.error('│  On Render free tier this means ALL DATA WILL BE LOST    │');
+    console.error('│  every time the service restarts (~15 min of inactivity).│');
+    console.error('│                                                          │');
+    console.error('│  Fix: Set a valid SUPABASE_KEY env var (a JWT starting   │');
+    console.error('│  with "eyJ...") in your Render dashboard.                │');
+    console.error('└──────────────────────────────────────────────────────────┘');
+    return { supabase: false, firestore: false };
+  }
 
-
+  // Verify the key actually works by doing a lightweight query
+  try {
+    const { error } = await sb.from('listings').select('id', { count: 'exact', head: true });
+    if (error) {
+      console.error(`[Supabase] ❌ Health check FAILED: ${error.message}`);
+      console.error('[Supabase] The key may be invalid or the table may not exist.');
+      supabaseAvailable = false;
+      return { supabase: false, firestore: firestoreAvailable === true };
+    }
+    console.log('[Supabase] ✅ Health check passed — data will persist across restarts.');
+    return { supabase: true, firestore: firestoreAvailable === true };
+  } catch (err) {
+    console.error(`[Supabase] ❌ Health check error: ${err.message}`);
+    supabaseAvailable = false;
+    return { supabase: false, firestore: firestoreAvailable === true };
+  }
+}
