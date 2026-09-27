@@ -562,7 +562,7 @@ app.post('/api/auth/verify-email-otp', authLimiter, async (req, res) => {
 
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
-    setAuthCookies(res, accessToken, refreshToken);
+    setAuthCookies(res, accessToken, refreshToken, req);
 
     res.json({
       success: true,
@@ -667,7 +667,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
-    setAuthCookies(res, accessToken, refreshToken);
+    setAuthCookies(res, accessToken, refreshToken, req);
 
     res.json({ success: true, user: sanitizeUser(user), accessToken });
   } catch (err) {
@@ -884,11 +884,12 @@ app.post('/api/auth/refresh', (req, res) => {
   try {
     const decoded = jwt.verify(refreshToken, REFRESH_SECRET);
     const newAccessToken = generateAccessToken({ email: decoded.email, phone: decoded.phone });
+    const isSecure = isProduction || (req && (req.secure || req.headers['x-forwarded-proto'] === 'https'));
 
     res.cookie('accessToken', newAccessToken, {
       httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      sameSite: isSecure ? 'none' : 'lax',
+      secure: isSecure,
       maxAge: 15 * 60 * 1000,
     });
 
