@@ -68,13 +68,19 @@ app.use(helmet());
 // Compression — Gzip/Brotli compress responses for optimal speed
 app.use(compression());
 
-// Health Check Endpoints for Render Deployment
+// Health Check Endpoints for Render Deployment & Uptime Monitoring (Zero DB/IO overhead)
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', service: 'Mari Milkat Backend API' });
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.status(200).json({ status: 'ok', service: 'Mari Milkat Backend API' });
 });
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'healthy' });
+app.get(['/health', '/api/health'], (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.status(200).json({
+    status: 'ok',
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Cookie Parser
