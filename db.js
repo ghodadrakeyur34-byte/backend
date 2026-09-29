@@ -46,10 +46,15 @@ export function getSupabaseInstance() {
     return null;
   }
 
-  // Real Supabase keys are long JWTs starting with 'eyJ' (100+ chars).
-  // Reject obviously invalid keys early to prevent silent fallback to ephemeral storage.
-  if (!supabaseKey.startsWith('eyJ') || supabaseKey.length < 100) {
-    console.error('[Supabase] ❌ SUPABASE_KEY appears invalid (expected a JWT starting with "eyJ...", got ' + supabaseKey.length + ' chars). Data will NOT persist!');
+  // Support both legacy JWT format (eyJ...) and new Supabase key formats (sb_secret_..., sb_publishable_...)
+  const isKeyFormatValid =
+    supabaseKey.startsWith('eyJ') ||
+    supabaseKey.startsWith('sb_secret_') ||
+    supabaseKey.startsWith('sb_publishable_') ||
+    supabaseKey.length >= 30;
+
+  if (!isKeyFormatValid) {
+    console.error('[Supabase] ❌ SUPABASE_KEY appears invalid (got ' + supabaseKey.length + ' chars). Data will NOT persist!');
     supabaseAvailable = false;
     return null;
   }

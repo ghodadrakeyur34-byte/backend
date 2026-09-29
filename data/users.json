@@ -1,33 +1,55 @@
 [
   {
-    "email": "marimilkatadmin@gmail.com",
     "name": "Admin",
-    "phone": "",
-    "passwordHash": "$2b$12$FtrXhxv7MDbz4VWnWhjJ2OpheBm6q.ZVpKBEscXYFRJ6b7EHm8CCm",
     "role": "admin",
+    "email": "marimilkatadmin@gmail.com",
+    "phone": "",
+    "status": "active",
+    "verified": {
+      "id": false,
+      "email": true,
+      "phone": false
+    },
     "createdAt": "2026-07-28T07:45:35.006Z",
     "loggedInAt": "2026-07-28T07:45:35.007Z",
-    "status": "active",
-    "verified": {
-      "phone": false,
-      "email": true,
-      "id": false
-    }
+    "passwordHash": "$2b$12$FtrXhxv7MDbz4VWnWhjJ2OpheBm6q.ZVpKBEscXYFRJ6b7EHm8CCm",
+    "id": "marimilkatadmin@gmail.com"
   },
   {
-    "email": "ghodadrakeyur34@gmail.com",
-    "name": "Ghodadrakeyur34",
-    "phone": "",
-    "avatar": "https://lh3.googleusercontent.com/a/ACg8ocLxHGYiGuAe8AXS9460nUr67hf_FsOo0zGyMaA8Ji6F7QNYQ9rI=s96-c",
-    "googleId": "106687619847389831000",
-    "createdAt": "2026-08-20T06:06:24.584Z",
-    "loggedInAt": "2026-08-20T06:36:14.938Z",
+    "name": "keyur Keyur",
+    "email": "k73234987@gmail.com",
+    "phone": "+916353467756",
     "status": "active",
     "verified": {
-      "phone": false,
+      "id": false,
       "email": true,
-      "google": true,
-      "id": false
-    }
+      "phone": false,
+      "google": true
+    },
+    "createdAt": "2026-08-11T15:48:02.598Z",
+    "loggedInAt": "2026-09-28T16:16:07.286Z",
+    "passwordHash": "$2b$10$feHj3x/3wqAqFDKJ2pUb/.oBzj4hIAwgk7JEggzO703fHUGQV4jhG",
+    "emailVerificationCode": "203602",
+    "emailVerificationExpires": 1786465976896,
+    "id": "k73234987@gmail.com",
+    "avatar": "https://lh3.googleusercontent.com/a/ACg8ocIuSiJbh8lk9YMQ6snxmMs3t_aYtIVy4LxvhdG7SZSfTuBIHK0=s96-c",
+    "googleId": "108778303016607114199"
+  },
+  {
+    "name": "Ghodadrakeyur34",
+    "email": "ghodadrakeyur34@gmail.com",
+    "phone": "",
+    "avatar": "https://lh3.googleusercontent.com/a/ACg8ocLxHGYiGuAe8AXS9460nUr67hf_FsOo0zGyMaA8Ji6F7QNYQ9rI=s96-c",
+    "status": "active",
+    "googleId": "106687619847389831000",
+    "verified": {
+      "id": false,
+      "email": true,
+      "phone": false,
+      "google": true
+    },
+    "createdAt": "2026-08-20T06:06:24.584Z",
+    "loggedInAt": "2026-08-20T06:36:14.938Z",
+    "id": "ghodadrakeyur34@gmail.com"
   }
 ]

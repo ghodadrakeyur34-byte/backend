@@ -53,10 +53,10 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 
 
 const BCRYPT_ROUNDS = 10;
-const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
-const REFRESH_SECRET = process.env.REFRESH_SECRET || crypto.randomBytes(64).toString('hex');
-const JWT_EXPIRES_IN = '15m';
-const REFRESH_EXPIRES_IN = '7d';
+const JWT_SECRET = process.env.JWT_SECRET || 'mari_milkat_jwt_secret_key_prod_2026_d8f2b3e1';
+const REFRESH_SECRET = process.env.REFRESH_SECRET || 'mari_milkat_refresh_secret_key_prod_2026_a7c4e9';
+const JWT_EXPIRES_IN = '30d'; // 30-day persistent user session
+const REFRESH_EXPIRES_IN = '90d'; // 90-day persistent refresh window
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
@@ -333,7 +333,7 @@ function generateAccessToken(user) {
   const role = user.role || (user.email && user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase() ? 'admin' : 'user');
   const isAdminFlag = role === 'admin' || user.isAdmin === true;
   return jwt.sign(
-    { email: user.email, phone: user.phone, role, isAdmin: isAdminFlag },
+    { email: user.email, phone: user.phone, name: user.name, role, isAdmin: isAdminFlag },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN }
   );
@@ -349,20 +349,21 @@ function setAuthCookies(res, accessToken, refreshToken, req) {
     httpOnly: true,
     sameSite: isSecure ? 'none' : 'lax',
     secure: isSecure,
-    maxAge: 15 * 60 * 1000, // 15 mins
+    path: '/',
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days (persists at least 7 to 30 days)
   });
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true,
     sameSite: isSecure ? 'none' : 'lax',
     secure: isSecure,
-    path: '/api/auth/refresh',
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    path: '/',
+    maxAge: 90 * 24 * 60 * 60 * 1000, // 90 days
   });
 }
 
 function authenticateUser(req, res, next) {
   const authHeader = req.headers['authorization'];
-  const token = (authHeader && authHeader.split(' ')[1]) || req.cookies?.accessToken;
+  const token = (authHeader && authHeader.split(' ')[1]) || req.cookies?.accessToken || req.headers['x-auth-token'] || req.headers['x-admin-token'];
 
   if (!token) {
     return res.status(401).json({ error: 'Authentication required. Please sign in.' });
@@ -391,12 +392,18 @@ function checkIsListingOwner(listing, user, isAdmin) {
 
   const userEmail = cleanStr(user.email);
   const userPhone = cleanPhone(user.phone);
+  const userId = cleanStr(user.id || user._id || user.googleId || user.sub);
 
   const ownerId = cleanStr(listing.ownerId);
+  const ownerUserId = cleanStr(listing.ownerUserId || listing.userId);
   const ownerEmail = cleanStr(listing.ownerEmail || listing.contact?.email);
   const ownerPhone = cleanPhone(listing.ownerPhone || (listing.ownerId && !listing.ownerId.includes('@') ? listing.ownerId : ''));
   const contactPhone = cleanPhone(listing.contact?.phone);
   const contactEmail = cleanStr(listing.contact?.email);
+
+  if (userId && (ownerId === userId || ownerUserId === userId)) {
+    return true;
+  }
 
   if (userEmail) {
     if (ownerId === userEmail || ownerEmail === userEmail || contactEmail === userEmail) {
@@ -573,8 +580,9 @@ app.post('/api/auth/verify-email-otp', authLimiter, async (req, res) => {
     res.json({
       success: true,
       message: 'Email verified successfully!',
-      user: sanitizeUser(user),
-      accessToken
+      user: { ...sanitizeUser(user), token: accessToken, refreshToken },
+      accessToken,
+      refreshToken,
     });
   } catch (err) {
     console.error('Error verifying OTP:', err);
@@ -610,10 +618,11 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       return res.json({
         success: true,
         isAdminLogin: true,
-        user: adminUser,
-        admin: adminUser,
+        user: { ...adminUser, token: accessToken, refreshToken },
+        admin: { ...adminUser, token: accessToken, refreshToken },
         token: accessToken,
-        accessToken
+        accessToken,
+        refreshToken
       });
     }
 
@@ -675,7 +684,12 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     const refreshToken = generateRefreshToken(user);
     setAuthCookies(res, accessToken, refreshToken, req);
 
-    res.json({ success: true, user: sanitizeUser(user), accessToken });
+    res.json({
+      success: true,
+      user: { ...sanitizeUser(user), token: accessToken, refreshToken },
+      accessToken,
+      refreshToken
+    });
   } catch (err) {
     console.error('Error logging in:', err);
     res.status(500).json({ error: 'Server error during login.' });
@@ -779,8 +793,9 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
 
     return res.json({
       success: true,
-      user: sanitizeUser(user),
+      user: { ...sanitizeUser(user), token: accessToken, refreshToken },
       accessToken,
+      refreshToken,
       message: 'Signed in successfully with Google.',
     });
   } catch (err) {
@@ -880,34 +895,77 @@ app.post('/api/auth/signup', signupLimiter, async (req, res) => {
   }
 });
 
-// Refresh Token Endpoint
-app.post('/api/auth/refresh', (req, res) => {
-  const refreshToken = req.cookies?.refreshToken;
+// Refresh Token Endpoint — supports cookies, request body, and x-refresh-token header
+app.post('/api/auth/refresh', async (req, res) => {
+  const refreshToken = req.body?.refreshToken || req.headers['x-refresh-token'] || req.cookies?.refreshToken;
   if (!refreshToken) {
     return res.status(401).json({ error: 'Refresh token required.' });
   }
 
   try {
     const decoded = jwt.verify(refreshToken, REFRESH_SECRET);
-    const newAccessToken = generateAccessToken({ email: decoded.email, phone: decoded.phone });
-    const isSecure = isProduction || (req && (req.secure || req.headers['x-forwarded-proto'] === 'https'));
+    const users = await getUsers();
+    const user = users.find((u) => u.email === decoded.email?.toLowerCase());
 
-    res.cookie('accessToken', newAccessToken, {
-      httpOnly: true,
-      sameSite: isSecure ? 'none' : 'lax',
-      secure: isSecure,
-      maxAge: 15 * 60 * 1000,
+    const userPayload = user ? sanitizeUser(user) : { email: decoded.email, phone: decoded.phone, name: decoded.name || 'User' };
+    const newAccessToken = generateAccessToken(userPayload);
+    const newRefreshToken = generateRefreshToken(userPayload);
+
+    setAuthCookies(res, newAccessToken, newRefreshToken, req);
+
+    res.json({
+      success: true,
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+      user: { ...userPayload, token: newAccessToken, refreshToken: newRefreshToken },
     });
-
-    res.json({ success: true, accessToken: newAccessToken });
   } catch (err) {
     return res.status(403).json({ error: 'Invalid or expired refresh token. Please log in again.' });
+  }
+});
+
+// Current User Session Verification & Profile Restore Endpoint
+app.get('/api/auth/me', async (req, res) => {
+  const authHeader = req.headers['authorization'];
+  const token = (authHeader && authHeader.split(' ')[1]) || req.cookies?.accessToken || req.headers['x-auth-token'];
+
+  if (!token) {
+    return res.status(401).json({ error: 'Not authenticated.' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (decoded.email && decoded.email.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
+      const adminUser = { email: ADMIN_EMAIL, name: 'Admin', role: 'admin', isAdmin: true, token };
+      return res.json({ success: true, user: adminUser, admin: adminUser });
+    }
+
+    const users = await getUsers();
+    const user = users.find(u => u.email === decoded.email?.toLowerCase() || (decoded.phone && u.phone === decoded.phone));
+    if (!user) {
+      return res.json({
+        success: true,
+        user: { email: decoded.email, phone: decoded.phone, name: decoded.name || 'User', token }
+      });
+    }
+
+    if (user.status === 'banned' || user.status === 'suspended') {
+      return res.status(403).json({ error: 'Your account has been ' + user.status + '.' });
+    }
+
+    res.json({
+      success: true,
+      user: { ...sanitizeUser(user), token }
+    });
+  } catch (err) {
+    return res.status(401).json({ error: 'Session invalid or expired.' });
   }
 });
 
 // Logout Endpoint — clears auth cookies
 app.post('/api/auth/logout', (req, res) => {
   res.clearCookie('accessToken');
+  res.clearCookie('refreshToken', { path: '/' });
   res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
   res.clearCookie('XSRF-TOKEN');
   res.json({ success: true, message: 'Logged out successfully.' });
@@ -941,7 +999,8 @@ app.post('/api/admin/login', adminAuthLimiter, (req, res) => {
       success: true,
       token: accessToken,
       accessToken,
-      admin: adminUser
+      refreshToken,
+      admin: { ...adminUser, token: accessToken, refreshToken }
     });
   }
   return res.status(401).json({ error: 'Invalid admin credentials.' });
@@ -1408,42 +1467,62 @@ app.get('/api/categories', async (req, res) => {
 
 // ===== LISTINGS ROUTES =====
 
-// 1. Get all listings (public — active listings, plus requesting user's own listings)
+// 1. Get all listings (public sees 'active' and 'sold'; 'pending' requires owner or admin)
 app.get('/api/listings', async (req, res) => {
   try {
     const listings = await getListings();
     
-    // Check if a user token is provided to include user's own listings regardless of status
+    // Check if a user or admin token is provided to include user's own listings regardless of status
     let requestingUserId = null;
+    let isAdminUser = false;
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       try {
         const token = authHeader.split(' ')[1];
         const decoded = jwt.verify(token, JWT_SECRET);
-        requestingUserId = decoded.phone || decoded.email;
+        requestingUserId = decoded.email || decoded.phone;
+        if (decoded.role === 'admin' || decoded.isAdmin) isAdminUser = true;
+      } catch (e) {}
+    }
+    const adminToken = req.headers['x-admin-token'];
+    if (adminToken) {
+      try {
+        const decoded = jwt.verify(adminToken, JWT_SECRET);
+        if (decoded.role === 'admin' || decoded.isAdmin) isAdminUser = true;
       } catch (e) {}
     }
     const headerPhone = req.headers['owner-phone'] || req.headers['x-user-phone'];
     if (headerPhone) requestingUserId = requestingUserId || headerPhone;
 
     const visibleListings = listings.filter(l => {
-      // If listing was rejected or deleted, only owner or admin can see it
-      if (l.status === 'rejected' || l.status === 'deleted') {
-        if (!requestingUserId) return false;
-        const reqIdLower = requestingUserId.toLowerCase();
-        const reqPhone = requestingUserId.replace(/\D/g, '').slice(-10);
-        return (
-          (l.ownerId && l.ownerId.toLowerCase() === reqIdLower) ||
-          (l.ownerEmail && l.ownerEmail.toLowerCase() === reqIdLower) ||
-          (l.contact?.email && l.contact.email.toLowerCase() === reqIdLower) ||
-          (reqPhone && reqPhone.length >= 7 && (
-            String(l.ownerId).replace(/\D/g, '').slice(-10) === reqPhone ||
-            String(l.ownerPhone || '').replace(/\D/g, '').slice(-10) === reqPhone ||
-            String(l.contact?.phone || '').replace(/\D/g, '').slice(-10) === reqPhone
-          ))
-        );
+      // Admins see all listings
+      if (isAdminUser) return true;
+
+      const listingStatus = l.status || 'active';
+
+      // Live public listings: only active or sold
+      if (listingStatus === 'active' || listingStatus === 'sold') {
+        return true;
       }
-      return true;
+
+      // Pending, rejected, or inactive listings require verified ownership to view
+      if (!requestingUserId) return false;
+      const reqIdLower = String(requestingUserId).toLowerCase();
+      const reqPhone = String(requestingUserId).replace(/\D/g, '').slice(-10);
+
+      const isOwner = (
+        (l.ownerId && String(l.ownerId).toLowerCase() === reqIdLower) ||
+        (l.ownerEmail && String(l.ownerEmail).toLowerCase() === reqIdLower) ||
+        (l.contact?.email && String(l.contact.email).toLowerCase() === reqIdLower) ||
+        (l.ownerUserId && String(l.ownerUserId).toLowerCase() === reqIdLower) ||
+        (reqPhone && reqPhone.length >= 7 && (
+          String(l.ownerId || '').replace(/\D/g, '').slice(-10) === reqPhone ||
+          String(l.ownerPhone || '').replace(/\D/g, '').slice(-10) === reqPhone ||
+          String(l.contact?.phone || '').replace(/\D/g, '').slice(-10) === reqPhone
+        ))
+      );
+
+      return isOwner;
     });
 
     res.json(visibleListings);
@@ -1497,6 +1576,7 @@ app.post('/api/listings', listingCreationLimiter, authenticateUser, async (req, 
     const incomingOwnerEmail = req.user?.email || (contact.email ? cleanText(contact.email) : (req.body.ownerEmail ? cleanText(req.body.ownerEmail) : ''));
     const incomingOwnerPhone = req.user?.phone || (contact.phone ? cleanText(contact.phone) : (req.body.ownerPhone ? cleanText(req.body.ownerPhone) : ''));
     const ownerId = req.user?.email || req.user?.phone || req.body.ownerId || incomingOwnerEmail || incomingOwnerPhone || 'user';
+    const ownerUserId = req.user?.id || req.user?.googleId || req.body.ownerUserId || '';
 
     // Mass Assignment Protection: Construct listing explicitly
     const newListing = {
@@ -1521,8 +1601,9 @@ app.post('/api/listings', listingCreationLimiter, authenticateUser, async (req, 
       ownerId,
       ownerEmail: incomingOwnerEmail,
       ownerPhone: incomingOwnerPhone,
+      ownerUserId,
       priceChangeLog: [],
-      status: 'active'
+      status: 'pending'
     };
 
     listings.unshift(newListing);

@@ -1,1 +1,53 @@
-[]
+[
+  {
+    "id": "p17906122581886365",
+    "type": "house",
+    "title": "nc cj",
+    "desc": "cn dc",
+    "price": 464554,
+    "size": 5,
+    "unit": "sqft",
+    "area": "jkndjkvnjk",
+    "city": "Una",
+    "lat": 20.8227,
+    "lng": 71.0421,
+    "images": [],
+    "contact": {
+      "name": "keyur Keyur",
+      "phone": "+916353467756",
+      "email": "k73234987@gmail.com"
+    },
+    "date": "2026-09-28",
+    "ownerId": "k73234987@gmail.com",
+    "ownerEmail": "k73234987@gmail.com",
+    "ownerPhone": "+916353467756",
+    "priceChangeLog": [],
+    "status": "pending"
+  },
+  {
+    "id": "p1789486237781yig7",
+    "lat": 20.90757606676084,
+    "lng": 70.36668216129021,
+    "area": "fjnbn",
+    "city": "Veraval",
+    "date": "2026-09-15",
+    "desc": "mfnkjkf",
+    "size": 2,
+    "type": "house",
+    "unit": "sqft",
+    "price": 654666,
+    "title": "fnkbjf",
+    "images": [],
+    "status": "active",
+    "contact": {
+      "name": "Admin",
+      "email": "marimilkatadmin@gmail.com",
+      "phone": "656465656"
+    },
+    "ownerId": "marimilkatadmin@gmail.com",
+    "ownerEmail": "marimilkatadmin@gmail.com",
+    "ownerPhone": "656465656",
+    "priceChangeLog": [],
+    "statusChangedAt": "2026-09-15T15:33:23.411Z"
+  }
+]
