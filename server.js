@@ -199,7 +199,8 @@ app.get('/api/csrf-token', (req, res) => {
 // ===== RATE LIMITERS =====
 const adminAuthLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // strict limit: max 5 admin attempts per 15 minutes
+  max: 50, // allow 50 attempts
+  skipSuccessfulRequests: true, // successful logins do not count toward rate limit
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many admin attempts. Please try again after 15 minutes.' },
@@ -310,38 +311,51 @@ function getPriceChangesThisMonth(priceChangeLog = []) {
 // isAdmin middleware — decodes JWT token and checks role === 'admin' before allowing access
 function isAdmin(req, res, next) {
   const authHeader = req.headers['authorization'];
-  const token = (authHeader && authHeader.split(' ')[1]) || req.cookies?.accessToken || req.headers['x-admin-token'];
+  const bearerToken = authHeader && authHeader.split(' ')[1];
+  const adminHeaderToken = req.headers['x-admin-token'];
+  const cookieToken = req.cookies?.accessToken;
 
-  if (!token) {
+  // Prioritize x-admin-token first, then bearerToken, then cookie
+  const candidateTokens = [adminHeaderToken, bearerToken, cookieToken].filter(Boolean);
+
+  if (candidateTokens.length === 0) {
     return res.status(401).json({ error: 'Unauthorized. Token missing.' });
   }
 
   // Check static ADMIN_TOKEN if explicitly set in environment using timing-safe comparison
-  if (ADMIN_TOKEN && typeof token === 'string' && token.length === ADMIN_TOKEN.length) {
+  if (ADMIN_TOKEN) {
+    for (const token of candidateTokens) {
+      if (typeof token === 'string' && token.length === ADMIN_TOKEN.length) {
+        try {
+          const isMatch = crypto.timingSafeEqual(Buffer.from(token), Buffer.from(ADMIN_TOKEN));
+          if (isMatch) {
+            req.user = { email: ADMIN_EMAIL, role: 'admin', isAdmin: true };
+            req.isAdmin = true;
+            return next();
+          }
+        } catch (e) {}
+      }
+    }
+  }
+
+  // Check JWT candidate tokens
+  for (const token of candidateTokens) {
     try {
-      const isMatch = crypto.timingSafeEqual(Buffer.from(token), Buffer.from(ADMIN_TOKEN));
-      if (isMatch) {
-        req.user = { email: ADMIN_EMAIL, role: 'admin', isAdmin: true };
+      const decoded = jwt.verify(token, JWT_SECRET);
+      const hasAdminRole = decoded.role === 'admin' || decoded.isAdmin === true;
+      const isMatchingEmail = decoded.email && (decoded.email.toLowerCase() === ADMIN_EMAIL.toLowerCase() || decoded.email.toLowerCase() === 'marimilkatadmin@gmail.com');
+
+      if (hasAdminRole || isMatchingEmail) {
+        req.user = decoded;
         req.isAdmin = true;
         return next();
       }
-    } catch (e) {}
-  }
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const hasAdminRole = decoded.role === 'admin' || decoded.isAdmin === true;
-    const isMatchingEmail = decoded.email && (decoded.email.toLowerCase() === ADMIN_EMAIL.toLowerCase() || decoded.email.toLowerCase() === 'marimilkatadmin@gmail.com');
-
-    if (hasAdminRole || isMatchingEmail) {
-      req.user = decoded;
-      req.isAdmin = true;
-      return next();
+    } catch (err) {
+      // Continue to next candidate token
     }
-    return res.status(403).json({ error: 'Forbidden. Admin access required.' });
-  } catch (err) {
-    return res.status(401).json({ error: 'Unauthorized. Invalid or expired token.' });
   }
+
+  return res.status(403).json({ error: 'Forbidden. Admin access required.' });
 }
 
 // Alias for backwards compatibility
