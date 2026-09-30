@@ -1520,15 +1520,15 @@ app.get('/api/listings', async (req, res) => {
   try {
     const listings = await getListings();
     
-    // Check if a user or admin token is provided to include user's own listings regardless of status
-    let requestingUserId = null;
+    // Check if a user or admin token/session is provided to include user's own listings regardless of status
+    let authUser = null;
     let isAdminUser = false;
     const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = (authHeader && authHeader.startsWith('Bearer ') && authHeader.split(' ')[1]) || req.cookies?.accessToken || req.headers['x-auth-token'];
+    if (token) {
       try {
-        const token = authHeader.split(' ')[1];
         const decoded = jwt.verify(token, JWT_SECRET);
-        requestingUserId = decoded.email || decoded.phone;
+        authUser = decoded;
         if (decoded.role === 'admin' || decoded.isAdmin) isAdminUser = true;
       } catch (e) {}
     }
@@ -1539,8 +1539,13 @@ app.get('/api/listings', async (req, res) => {
         if (decoded.role === 'admin' || decoded.isAdmin) isAdminUser = true;
       } catch (e) {}
     }
-    const headerPhone = req.headers['owner-phone'] || req.headers['x-user-phone'];
-    if (headerPhone) requestingUserId = requestingUserId || headerPhone;
+    const headerPhone = req.headers['owner-phone'] || req.headers['x-user-phone'] || req.headers['owner-email'] || req.headers['x-owner-phone'];
+    if (!authUser && headerPhone) {
+      authUser = { phone: headerPhone, email: headerPhone, id: headerPhone };
+    } else if (authUser && headerPhone) {
+      if (!authUser.phone && !headerPhone.includes('@')) authUser.phone = headerPhone;
+      if (!authUser.email && headerPhone.includes('@')) authUser.email = headerPhone;
+    }
 
     const visibleListings = listings.filter(l => {
       // Admins see all listings
@@ -1548,29 +1553,14 @@ app.get('/api/listings', async (req, res) => {
 
       const listingStatus = l.status || 'active';
 
-      // Live public listings: only active or sold
+      // Live approved public listings: only active or sold
       if (listingStatus === 'active' || listingStatus === 'sold') {
         return true;
       }
 
       // Pending, rejected, or inactive listings require verified ownership to view
-      if (!requestingUserId) return false;
-      const reqIdLower = String(requestingUserId).toLowerCase();
-      const reqPhone = String(requestingUserId).replace(/\D/g, '').slice(-10);
-
-      const isOwner = (
-        (l.ownerId && String(l.ownerId).toLowerCase() === reqIdLower) ||
-        (l.ownerEmail && String(l.ownerEmail).toLowerCase() === reqIdLower) ||
-        (l.contact?.email && String(l.contact.email).toLowerCase() === reqIdLower) ||
-        (l.ownerUserId && String(l.ownerUserId).toLowerCase() === reqIdLower) ||
-        (reqPhone && reqPhone.length >= 7 && (
-          String(l.ownerId || '').replace(/\D/g, '').slice(-10) === reqPhone ||
-          String(l.ownerPhone || '').replace(/\D/g, '').slice(-10) === reqPhone ||
-          String(l.contact?.phone || '').replace(/\D/g, '').slice(-10) === reqPhone
-        ))
-      );
-
-      return isOwner;
+      if (!authUser) return false;
+      return checkIsListingOwner(l, authUser, false);
     });
 
     res.json(visibleListings);
