@@ -1,28 +1,35 @@
 [
   {
-    "id": "p17906122581886365",
+    "id": "p17906978144222u6z",
+    "lat": 20.909673457506738,
+    "lng": 70.35738945007326,
+    "area": "Bjar Love chowk",
+    "city": "Veraval",
+    "date": "2026-09-29",
+    "desc": "Love bajar chok",
+    "size": 2400,
     "type": "house",
-    "title": "nc cj",
-    "desc": "cn dc",
-    "price": 464554,
-    "size": 5,
     "unit": "sqft",
-    "area": "jkndjkvnjk",
-    "city": "Una",
-    "lat": 20.8227,
-    "lng": 71.0421,
-    "images": [],
+    "price": 3400045,
+    "title": "1200",
+    "images": [
+      "https://osowusrcwpqqxhcjzaom.supabase.co/storage/v1/object/public/property-images/prop_1790697812821_9963516f.jpg"
+    ],
+    "status": "active",
     "contact": {
-      "name": "keyur Keyur",
-      "phone": "+916353467756",
-      "email": "k73234987@gmail.com"
+      "name": "Vastu Vishwa",
+      "email": "vastuvishwa1729@gmail.com",
+      "phone": "7228063914"
     },
-    "date": "2026-09-28",
-    "ownerId": "k73234987@gmail.com",
-    "ownerEmail": "k73234987@gmail.com",
-    "ownerPhone": "+916353467756",
-    "priceChangeLog": [],
-    "status": "pending"
+    "ownerId": "vastuvishwa1729@gmail.com",
+    "ownerEmail": "vastuvishwa1729@gmail.com",
+    "ownerPhone": "7228063914",
+    "ownerUserId": "103254132437818958992",
+    "priceChangeLog": [
+      "2026-10-02T10:45:41.799Z",
+      "2026-10-02T10:45:42.252Z"
+    ],
+    "statusChangedAt": "2026-10-01T13:13:30.406Z"
   },
   {
     "id": "p1789486237781yig7",
@@ -31,7 +38,7 @@
     "area": "fjnbn",
     "city": "Veraval",
     "date": "2026-09-15",
-    "desc": "mfnkjkf",
+    "desc": "Prime location veraval",
     "size": 2,
     "type": "house",
     "unit": "sqft",
@@ -49,5 +56,97 @@
     "ownerPhone": "656465656",
     "priceChangeLog": [],
     "statusChangedAt": "2026-09-15T15:33:23.411Z"
+  },
+  {
+    "id": "p1792328198468agrh",
+    "lat": 21.504171047760202,
+    "lng": 70.43033480644227,
+    "area": "Timbawadi",
+    "city": "Junagadh",
+    "date": "2026-10-18",
+    "desc": "Located just 50M away from the Madhuram Gate to Zanzarda road in peaceful and safe residential society. 7.5M wide road in front.",
+    "size": 2010,
+    "type": "house",
+    "unit": "sqft",
+    "price": 5700000,
+    "title": "1BHK + 1BHK duplex in Timbawadi, Junagadh",
+    "images": [
+      "https://osowusrcwpqqxhcjzaom.supabase.co/storage/v1/object/public/property-images/prop_1792328197168_0513d0b7.jpg",
+      "https://osowusrcwpqqxhcjzaom.supabase.co/storage/v1/object/public/property-images/prop_1792328197169_8e8dca92.jpg",
+      "https://osowusrcwpqqxhcjzaom.supabase.co/storage/v1/object/public/property-images/prop_1792328197169_290ab8a5.jpg"
+    ],
+    "status": "pending",
+    "contact": {
+      "name": "Bhargav Ghodadra",
+      "email": "bhargavghodadrak2425@gmail.com",
+      "phone": "9328663714"
+    },
+    "ownerId": "bhargavghodadrak2425@gmail.com",
+    "ownerEmail": "bhargavghodadrak2425@gmail.com",
+    "ownerPhone": "9328663714",
+    "ownerUserId": "bhargavghodadrak2425@gmail.com",
+    "priceChangeLog": []
+  },
+  {
+    "id": "p1792165671939yg5d",
+    "lat": 21.504550328052662,
+    "lng": 70.43034094618635,
+    "area": "Timbawadi",
+    "city": "Junagadh",
+    "date": "2026-10-16",
+    "desc": "Located just 50M away from the Madhuram Gate to Zanzarda road in peaceful and safe residential society. 7.5M wide road in front.",
+    "size": 2010,
+    "type": "house",
+    "unit": "sqft",
+    "price": 5700000,
+    "title": "1BHK + 1BHK duplex in Timbawadi, Junagadh",
+    "images": [
+      "https://osowusrcwpqqxhcjzaom.supabase.co/storage/v1/object/public/property-images/prop_1792165669828_1a2d086f.jpg",
+      "https://osowusrcwpqqxhcjzaom.supabase.co/storage/v1/object/public/property-images/prop_1792165669829_29d69fca.jpg",
+      "https://osowusrcwpqqxhcjzaom.supabase.co/storage/v1/object/public/property-images/prop_1792165669829_c7977f16.jpg"
+    ],
+    "status": "active",
+    "contact": {
+      "name": "Bhargav Ghodadra",
+      "email": "bhargavghodadrak2425@gmail.com",
+      "phone": "9328663714"
+    },
+    "ownerId": "bhargavghodadrak2425@gmail.com",
+    "ownerEmail": "bhargavghodadrak2425@gmail.com",
+    "ownerPhone": "9328663714",
+    "ownerUserId": "110395356057852826048",
+    "priceChangeLog": [],
+    "statusChangedAt": "2026-10-16T16:08:10.550Z"
+  },
+  {
+    "id": "p1792001711082avdu",
+    "lat": 20.93780676621418,
+    "lng": 70.34773493929774,
+    "area": "Nayara petrol Pump ni pachhad",
+    "city": "Veraval",
+    "date": "2026-10-14",
+    "desc": "Mari Milkat Code: V-P-S-AA001 \n🏡 પ્લોટ નં. 51 – તમારા સપનાના ઘર માટે ઉત્તમ તક!\n\n📍  વેરાવળ\n\n✅ રહેણાંક માટે ઉત્તમ વિકલ્પ – તમારા પરિવારના સપનાનું ઘર બનાવવા માટે.\n\n✅ રોકાણની ઉત્તમ તક – ભવિષ્ય માટે જમીનમાં રોકાણ કરવાનું વિચારી રહ્યા હોવ તો વિચારવા યોગ્ય.\n\n✅ તમારી પસંદગીનું બાંધકામ – તમારી જરૂરિયાત મુજબ ઘર બનાવવાની તક.\n\n✅ લાંબા ગાળાની મિલકત – ભવિષ્યની જરૂરિયાતો માટે જમીન ખરીદવાનો વિકલ્પ.\n\n✅ વેરાવળમાં પ્લોટ ખરીદવાની તક – પોતાની જમીન અને પોતાના ઘરના સપનાને સાકાર કરો.\n\n📞 વધુ માહિતી, પ્લોટની કિંમત અને સ્થળ મુલાકાત માટે આજે જ સંપર્ક કરો.\n\nMari Milkat – તમારી મિલકત, તમારી પસંદગી!",
+    "size": 1211,
+    "type": "plot",
+    "unit": "sqft",
+    "price": 4530000,
+    "title": "302 gaj no purva disha no plot",
+    "images": [
+      "https://osowusrcwpqqxhcjzaom.supabase.co/storage/v1/object/public/property-images/prop_1792001709456_759cfbbe.jpg",
+      "https://osowusrcwpqqxhcjzaom.supabase.co/storage/v1/object/public/property-images/prop_1792001709457_f2540cae.jpg",
+      "https://osowusrcwpqqxhcjzaom.supabase.co/storage/v1/object/public/property-images/prop_1792001709452_1e97196b.jpg"
+    ],
+    "status": "active",
+    "contact": {
+      "name": "PSI Jayaben Jora",
+      "email": "vastuvishwa1729@gmail.com",
+      "phone": "7228063914"
+    },
+    "ownerId": "vastuvishwa1729@gmail.com",
+    "ownerEmail": "vastuvishwa1729@gmail.com",
+    "ownerPhone": "7228063914",
+    "ownerUserId": "vastuvishwa1729@gmail.com",
+    "priceChangeLog": [],
+    "statusChangedAt": "2026-10-14T18:15:33.491Z"
   }
 ]

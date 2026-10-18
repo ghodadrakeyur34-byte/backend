@@ -402,9 +402,24 @@ function authenticateUser(req, res, next) {
     return res.status(401).json({ error: 'Authentication required. Please sign in.' });
   }
 
+  // Check static ADMIN_TOKEN if explicitly set in environment
+  if (ADMIN_TOKEN && typeof token === 'string' && token.length === ADMIN_TOKEN.length) {
+    try {
+      const isMatch = crypto.timingSafeEqual(Buffer.from(token), Buffer.from(ADMIN_TOKEN));
+      if (isMatch) {
+        req.user = { email: ADMIN_EMAIL, role: 'admin', isAdmin: true };
+        req.isAdmin = true;
+        return next();
+      }
+    } catch (e) {}
+  }
+
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
+    if (decoded.role === 'admin' || decoded.isAdmin || (decoded.email && decoded.email.toLowerCase() === ADMIN_EMAIL.toLowerCase())) {
+      req.isAdmin = true;
+    }
     return next();
   } catch (err) {
     return res.status(401).json({ error: 'Authentication token is invalid or expired. Please sign in again.' });
@@ -1739,6 +1754,145 @@ app.put('/api/listings/:id/price', authenticateUser, async (req, res) => {
   } catch (err) {
     console.error('Error updating price:', err);
     res.status(500).json({ error: 'Server error updating price.' });
+  }
+});
+
+// 5. Update entire property details (IDOR Protection: requires auth & verified ownership)
+app.put('/api/listings/:id', authenticateUser, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      type,
+      title,
+      desc,
+      price,
+      size,
+      unit,
+      area,
+      city,
+      lat,
+      lng,
+      latitude,
+      longitude,
+      images,
+      contact,
+    } = req.body;
+
+    const listings = await getListings();
+    const listingIndex = listings.findIndex((l) => l.id === id);
+
+    if (listingIndex === -1) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    const currentListing = listings[listingIndex];
+
+    // IDOR Check: Ensure user owns listing or is admin
+    const isOwner = checkIsListingOwner(currentListing, req.user, req.isAdmin);
+    if (!isOwner) {
+      return res.status(403).json({ error: 'Forbidden. You do not own this listing.' });
+    }
+
+    // Input validation
+    if (!title || price === undefined || size === undefined || !area || !city) {
+      return res.status(400).json({ error: 'Title, price, size, area, and city are required.' });
+    }
+
+    const numPrice = Number(price);
+    const numSize = Number(size);
+
+    if (isNaN(numPrice) || numPrice <= 0) {
+      return res.status(400).json({ error: 'Valid price greater than 0 is required.' });
+    }
+
+    if (isNaN(numSize) || numSize <= 0) {
+      return res.status(400).json({ error: 'Valid size greater than 0 is required.' });
+    }
+
+    // Track monthly price changes only if price has actually changed
+    const log = currentListing.priceChangeLog || [];
+    let updatedPriceChangeLog = log;
+    if (numPrice !== Number(currentListing.price) && !req.isAdmin) {
+      const changesThisMonth = getPriceChangesThisMonth(log);
+      if (changesThisMonth.length >= 4) {
+        return res.status(400).json({
+          error: 'You have reached the maximum of 4 price changes this month.'
+        });
+      }
+      updatedPriceChangeLog = [...log, new Date().toISOString()];
+    }
+
+    // Process images if provided
+    let updatedImages = currentListing.images || [];
+    if (Array.isArray(images)) {
+      updatedImages = await processListingImages(images, 'prop');
+
+      // Asynchronously clean up any old images that were removed
+      const oldImages = Array.isArray(currentListing.images) ? currentListing.images : [];
+      const newImagesSet = new Set(updatedImages);
+      for (const oldUrl of oldImages) {
+        if (!newImagesSet.has(oldUrl)) {
+          deleteStorageImage(oldUrl).catch(() => {});
+        }
+      }
+    }
+
+    // Coordinate resolution
+    const cityCoords = {
+      Veraval: { lat: 20.9082, lng: 70.3703 },
+      Una: { lat: 20.8227, lng: 71.0421 },
+      Junagadh: { lat: 21.5222, lng: 70.4579 },
+    };
+    const defaultCoord = cityCoords[city] || { lat: 20.9082, lng: 70.3703 };
+    const incomingLat = lat !== undefined && lat !== null ? lat : latitude;
+    const incomingLng = lng !== undefined && lng !== null ? lng : longitude;
+    const finalLat = incomingLat !== undefined && incomingLat !== null && !isNaN(Number(incomingLat))
+      ? Number(incomingLat)
+      : (currentListing.lat || defaultCoord.lat);
+    const finalLng = incomingLng !== undefined && incomingLng !== null && !isNaN(Number(incomingLng))
+      ? Number(incomingLng)
+      : (currentListing.lng || defaultCoord.lng);
+
+    // Clean and update contact
+    const currentContact = currentListing.contact || {};
+    const updatedContact = {
+      name: contact?.name ? cleanText(contact.name) : (currentContact.name || ''),
+      phone: contact?.phone ? cleanText(contact.phone) : (currentContact.phone || ''),
+      email: contact?.email ? cleanText(contact.email) : (currentContact.email || currentListing.ownerEmail || ''),
+    };
+
+    // Construct sanitized and safe updated listing
+    const updatedListing = {
+      ...currentListing,
+      type: cleanText(type || currentListing.type || 'house'),
+      title: cleanText(title),
+      desc: cleanText(desc || ''),
+      price: numPrice,
+      size: numSize,
+      unit: cleanText(unit || currentListing.unit || 'sqft'),
+      area: cleanText(area),
+      city: cleanText(city),
+      lat: finalLat,
+      lng: finalLng,
+      latitude: finalLat,
+      longitude: finalLng,
+      images: updatedImages,
+      contact: updatedContact,
+      priceChangeLog: updatedPriceChangeLog,
+      updatedAt: new Date().toISOString(),
+    };
+
+    listings[listingIndex] = updatedListing;
+    await saveListings(listings);
+
+    res.json({
+      success: true,
+      message: 'Property details updated successfully.',
+      listing: updatedListing,
+    });
+  } catch (err) {
+    console.error('Error updating listing details:', err);
+    res.status(500).json({ error: 'Server error updating property details.' });
   }
 });
 

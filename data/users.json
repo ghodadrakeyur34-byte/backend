@@ -1,41 +1,6 @@
 [
   {
-    "name": "Admin",
-    "role": "admin",
-    "email": "marimilkatadmin@gmail.com",
-    "phone": "",
-    "status": "active",
-    "verified": {
-      "id": false,
-      "email": true,
-      "phone": false
-    },
-    "createdAt": "2026-07-28T07:45:35.006Z",
-    "loggedInAt": "2026-07-28T07:45:35.007Z",
-    "passwordHash": "$2b$12$FtrXhxv7MDbz4VWnWhjJ2OpheBm6q.ZVpKBEscXYFRJ6b7EHm8CCm",
-    "id": "marimilkatadmin@gmail.com"
-  },
-  {
-    "name": "keyur Keyur",
-    "email": "k73234987@gmail.com",
-    "phone": "+916353467756",
-    "status": "active",
-    "verified": {
-      "id": false,
-      "email": true,
-      "phone": false,
-      "google": true
-    },
-    "createdAt": "2026-08-11T15:48:02.598Z",
-    "loggedInAt": "2026-09-28T16:16:07.286Z",
-    "passwordHash": "$2b$10$feHj3x/3wqAqFDKJ2pUb/.oBzj4hIAwgk7JEggzO703fHUGQV4jhG",
-    "emailVerificationCode": "203602",
-    "emailVerificationExpires": 1786465976896,
-    "id": "k73234987@gmail.com",
-    "avatar": "https://lh3.googleusercontent.com/a/ACg8ocIuSiJbh8lk9YMQ6snxmMs3t_aYtIVy4LxvhdG7SZSfTuBIHK0=s96-c",
-    "googleId": "108778303016607114199"
-  },
-  {
+    "id": "ghodadrakeyur34@gmail.com",
     "name": "Ghodadrakeyur34",
     "email": "ghodadrakeyur34@gmail.com",
     "phone": "",
@@ -49,7 +14,63 @@
       "google": true
     },
     "createdAt": "2026-08-20T06:06:24.584Z",
-    "loggedInAt": "2026-08-20T06:36:14.938Z",
-    "id": "ghodadrakeyur34@gmail.com"
+    "loggedInAt": "2026-10-02T14:10:38.293Z"
+  },
+  {
+    "id": "vastuvishwa1729@gmail.com",
+    "name": "Vastu Vishwa",
+    "email": "vastuvishwa1729@gmail.com",
+    "phone": "",
+    "avatar": "https://lh3.googleusercontent.com/a/ACg8ocKg3Yi-SKhh4PpIf6oO8OPTBcz80oHUmWds-6X6p1l14mjKeC6p=s96-c",
+    "status": "active",
+    "googleId": "103254132437818958992",
+    "verified": {
+      "id": false,
+      "email": true,
+      "phone": false,
+      "google": true
+    },
+    "createdAt": "2026-09-29T16:02:22.376Z",
+    "loggedInAt": "2026-10-02T10:45:01.266Z"
+  },
+  {
+    "id": "bhargavghodadrak2425@gmail.com",
+    "name": "Bhargav Ghodadra",
+    "email": "bhargavghodadrak2425@gmail.com",
+    "phone": "",
+    "avatar": "https://lh3.googleusercontent.com/a/ACg8ocLqPmhIHTsK8DOQr-IKr78l_SEDVNBGCN5q1nyUiP9Quyl5DWZKnQ=s96-c",
+    "status": "active",
+    "googleId": "110395356057852826048",
+    "verified": {
+      "id": false,
+      "email": true,
+      "phone": false,
+      "google": true
+    },
+    "createdAt": "2026-10-16T15:44:19.921Z",
+    "loggedInAt": "2026-10-18T12:36:31.823Z"
+  },
+  {
+    "id": "marimilkatadmin@gmail.com",
+    "name": "Admin",
+    "role": "admin",
+    "email": "marimilkatadmin@gmail.com",
+    "phone": "",
+    "status": "active",
+    "verified": {
+      "id": false,
+      "email": true,
+      "phone": false
+    },
+    "createdAt": "2026-07-28T07:45:35.006Z",
+    "loggedInAt": "2026-07-28T07:45:35.007Z",
+    "passwordHash": "$2b$12$FtrXhxv7MDbz4VWnWhjJ2OpheBm6q.ZVpKBEscXYFRJ6b7EHm8CCm"
+  },
+  {
+    "createdAt": "2026-08-11T15:48:02.598Z",
+    "loggedInAt": "2026-10-18T16:19:04.629Z",
+    "passwordHash": "$2b$10$feHj3x/3wqAqFDKJ2pUb/.oBzj4hIAwgk7JEggzO703fHUGQV4jhG",
+    "emailVerificationCode": "203602",
+    "emailVerificationExpires": 1786465976896
   }
 ]
