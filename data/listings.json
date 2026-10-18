@@ -15,6 +15,7 @@
     "images": [
       "https://osowusrcwpqqxhcjzaom.supabase.co/storage/v1/object/public/property-images/prop_1790697812821_9963516f.jpg"
     ],
+    "purpose": "sale",
     "status": "active",
     "contact": {
       "name": "Vastu Vishwa",
@@ -42,9 +43,10 @@
     "size": 2,
     "type": "house",
     "unit": "sqft",
-    "price": 654666,
-    "title": "fnkbjf",
+    "price": 25000,
+    "title": "Modern House for Rent in Veraval",
     "images": [],
+    "purpose": "rent",
     "status": "active",
     "contact": {
       "name": "Admin",
