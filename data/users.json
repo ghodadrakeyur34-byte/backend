@@ -65,12 +65,5 @@
     "createdAt": "2026-07-28T07:45:35.006Z",
     "loggedInAt": "2026-07-28T07:45:35.007Z",
     "passwordHash": "$2b$12$FtrXhxv7MDbz4VWnWhjJ2OpheBm6q.ZVpKBEscXYFRJ6b7EHm8CCm"
-  },
-  {
-    "createdAt": "2026-08-11T15:48:02.598Z",
-    "loggedInAt": "2026-10-18T16:19:04.629Z",
-    "passwordHash": "$2b$10$feHj3x/3wqAqFDKJ2pUb/.oBzj4hIAwgk7JEggzO703fHUGQV4jhG",
-    "emailVerificationCode": "203602",
-    "emailVerificationExpires": 1786465976896
   }
 ]
