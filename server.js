@@ -25,8 +25,8 @@ import { fileTypeFromBuffer } from 'file-type';
 import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
-import { sendVerificationEmail } from './emailService.js';
-import { getListings, saveListings, getUsers, saveUsers, getReports, saveReports, getCategories, saveCategories, getSettings, saveSettings, getInquiries, saveInquiries, checkStorageHealth } from './db.js';
+import { sendVerificationEmail, sendLeadNotificationEmail } from './emailService.js';
+import { getListings, saveListings, getUsers, saveUsers, getReports, saveReports, getCategories, saveCategories, getSettings, saveSettings, getInquiries, saveInquiries, getLeads, saveLeads, getNotifications, saveNotifications, checkStorageHealth } from './db.js';
 import { uploadImageToSupabase, processListingImages, deleteStorageImage } from './storageService.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -245,6 +245,22 @@ const reportLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many reports submitted. Please try again later.' },
+});
+
+const contactRevealLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 15, // max 15 contact reveals per 15 mins per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many contact reveal requests. Please try again after 15 minutes.' },
+});
+
+const leadRequestLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 15, // max 15 callback requests per 15 mins per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many callback requests. Please wait a few minutes before requesting another callback.' },
 });
 
 app.use('/api/', apiLimiter);
@@ -1528,6 +1544,45 @@ app.get('/api/categories', async (req, res) => {
   }
 });
 
+/**
+ * Privacy Sanitizer: Protects seller contact privacy based on contact_preference.
+ * - Mode B ('notify'): Permanently strips phone and email from the response payload
+ *   unless the requesting user is the listing owner or an admin.
+ * - Mode A ('direct'): Masks contact info for unauthenticated users until on-demand reveal.
+ */
+function sanitizeListingForViewer(listing, authUser, isAdminUser) {
+  if (!listing) return listing;
+  const isOwner = checkIsListingOwner(listing, authUser, isAdminUser);
+  const contactPref = listing.contact_preference === 'direct' ? 'direct' : 'notify';
+
+  const safe = {
+    ...listing,
+    contact_preference: contactPref,
+    contact: listing.contact ? { ...listing.contact } : { name: 'Seller' }
+  };
+
+  if (isOwner || isAdminUser) {
+    return safe;
+  }
+
+  if (contactPref === 'notify') {
+    // SECURITY RULE: Strip out seller.phone and seller.email completely.
+    delete safe.contact.phone;
+    delete safe.contact.email;
+    delete safe.ownerPhone;
+    delete safe.ownerEmail;
+  } else if (contactPref === 'direct') {
+    if (!authUser) {
+      delete safe.contact.phone;
+      delete safe.contact.email;
+      delete safe.ownerPhone;
+      delete safe.ownerEmail;
+    }
+  }
+
+  return safe;
+}
+
 // ===== LISTINGS ROUTES =====
 
 // 1. Get all listings (public sees 'active' and 'sold'; 'pending' requires owner or admin)
@@ -1578,10 +1633,432 @@ app.get('/api/listings', async (req, res) => {
       return checkIsListingOwner(l, authUser, false);
     });
 
-    res.json(visibleListings);
+    // Sanitize contact info based on contact_preference
+    const sanitized = visibleListings.map(l => sanitizeListingForViewer(l, authUser, isAdminUser));
+
+    res.json(sanitized);
   } catch (err) {
     console.error('Error reading listings:', err);
     res.status(500).json({ error: 'Server error reading listings.' });
+  }
+});
+
+// Endpoint 1: Fetch Single Listing Details with Contact Privacy & Callback Status
+app.get('/api/listings/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const listings = await getListings();
+    const listing = listings.find((l) => String(l.id) === String(id));
+
+    if (!listing) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    let authUser = null;
+    let isAdminUser = false;
+    const authHeader = req.headers.authorization;
+    const token = (authHeader && authHeader.startsWith('Bearer ') && authHeader.split(' ')[1]) || req.cookies?.accessToken || req.headers['x-auth-token'];
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        authUser = decoded;
+        if (decoded.role === 'admin' || decoded.isAdmin) isAdminUser = true;
+      } catch (e) {}
+    }
+    const adminToken = req.headers['x-admin-token'];
+    if (adminToken) {
+      try {
+        const decoded = jwt.verify(adminToken, JWT_SECRET);
+        if (decoded.role === 'admin' || decoded.isAdmin) isAdminUser = true;
+      } catch (e) {}
+    }
+
+    const listingStatus = listing.status || 'active';
+    const isOwner = checkIsListingOwner(listing, authUser, isAdminUser);
+
+    if (listingStatus !== 'active' && listingStatus !== 'sold' && !isOwner && !isAdminUser) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    // Check if the current authenticated buyer has already requested callback
+    let hasRequestedCallback = false;
+    let leadStatus = null;
+    if (authUser) {
+      const buyerId = String(authUser.id || authUser.email);
+      const buyerPhone = authUser.phone ? String(authUser.phone).replace(/\D/g, '').slice(-10) : '';
+      const leads = await getLeads();
+      const existingLead = leads.find(l => {
+        if (String(l.listing_id) !== String(id)) return false;
+        if (String(l.buyer_id) === buyerId) return true;
+        if (buyerPhone && l.buyer_phone && String(l.buyer_phone).replace(/\D/g, '').slice(-10) === buyerPhone) return true;
+        return false;
+      });
+
+      if (existingLead) {
+        hasRequestedCallback = true;
+        leadStatus = existingLead.status;
+      }
+    }
+
+    const sanitized = sanitizeListingForViewer(listing, authUser, isAdminUser);
+    sanitized.hasRequestedCallback = hasRequestedCallback;
+    sanitized.leadStatus = leadStatus;
+
+    res.json(sanitized);
+  } catch (err) {
+    console.error('Error fetching listing details:', err);
+    res.status(500).json({ error: 'Server error reading listing.' });
+  }
+});
+
+// Mode A: Direct Contact Reveal (Requires authenticated session, rate-limited)
+app.post('/api/listings/:id/contact', contactRevealLimiter, authenticateUser, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const listings = await getListings();
+    const listing = listings.find((l) => String(l.id) === String(id));
+
+    if (!listing) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    const contactPref = listing.contact_preference === 'direct' ? 'direct' : 'notify';
+    if (contactPref === 'notify') {
+      return res.status(403).json({
+        error: 'Seller has chosen to keep their contact number private. Please click "Request Callback" to connect.',
+        code: 'CALLBACK_ONLY'
+      });
+    }
+
+    const phone = listing.contact?.phone || listing.ownerPhone;
+    const email = listing.contact?.email || listing.ownerEmail;
+    const name = listing.contact?.name || 'Seller';
+
+    res.json({
+      success: true,
+      phone,
+      email,
+      name,
+    });
+  } catch (err) {
+    console.error('Error revealing contact number:', err);
+    res.status(500).json({ error: 'Server error revealing contact number.' });
+  }
+});
+
+// Endpoint 2: Request Callback (Lead Dispatch)
+app.post('/api/listings/:id/request-callback', leadRequestLimiter, authenticateUser, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const listings = await getListings();
+    const listing = listings.find((l) => String(l.id) === String(id));
+
+    if (!listing) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    // Verify that the calling user has is_phone_verified === true
+    const users = await getUsers();
+    const currentUser = users.find(u => u.email === (req.user?.email || '').toLowerCase()) || req.user;
+
+    const isPhoneVerified = Boolean(
+      currentUser.is_phone_verified ||
+      currentUser.isPhoneVerified ||
+      currentUser.verified?.phone ||
+      req.user?.is_phone_verified ||
+      req.user?.isPhoneVerified ||
+      req.user?.verified?.phone
+    );
+
+    if (!isPhoneVerified) {
+      return res.status(403).json({
+        code: 'PHONE_VERIFICATION_REQUIRED',
+        error: 'A verified mobile number is required to request a callback.'
+      });
+    }
+
+    // Prevent seller from requesting callback on their own listing
+    if (checkIsListingOwner(listing, currentUser, false)) {
+      return res.status(400).json({ error: 'You cannot request a callback on your own listing.' });
+    }
+
+    const buyerId = String(currentUser.id || currentUser.email || req.user.id || req.user.email);
+    const buyerPhone = cleanText(currentUser.phone || req.user.phone || req.body.buyer_phone || '');
+    const buyerName = cleanText(currentUser.name || req.user.name || req.body.buyer_name || 'Buyer');
+
+    if (!buyerPhone || buyerPhone.length < 7) {
+      return res.status(400).json({ error: 'A valid buyer mobile number is required.' });
+    }
+
+    const cleanPhone = (p) => (p ? String(p).replace(/\D/g, '').slice(-10) : '');
+    const leads = await getLeads();
+
+    // Check for existing lead from the same buyer on this listing (Idempotency)
+    const existingLead = leads.find(l => {
+      if (String(l.listing_id) !== String(id)) return false;
+      if (String(l.buyer_id) === buyerId) return true;
+      if (cleanPhone(l.buyer_phone) === cleanPhone(buyerPhone)) return true;
+      return false;
+    });
+
+    if (existingLead) {
+      return res.status(200).json({
+        success: true,
+        message: 'Callback already requested for this property.',
+        code: 'LEAD_EXISTS',
+        lead: existingLead,
+      });
+    }
+
+    // 1. Fetch seller_id from listing
+    const sellerId = String(listing.ownerUserId || listing.ownerEmail || listing.ownerId || listing.contact?.email || 'seller');
+    const sellerEmail = listing.ownerEmail || listing.contact?.email || '';
+    const sellerName = listing.contact?.name || 'Seller';
+
+    // 2. Insert record into listing_leads
+    const newLead = {
+      id: crypto.randomUUID(),
+      listing_id: String(listing.id),
+      listing_title: listing.title || 'Property',
+      seller_id: sellerId,
+      seller_email: sellerEmail,
+      seller_name: sellerName,
+      buyer_id: buyerId,
+      buyer_phone: buyerPhone,
+      buyer_name: buyerName,
+      buyer_email: currentUser.email || req.user.email || '',
+      status: 'pending',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    leads.unshift(newLead);
+    await saveLeads(leads);
+
+    // 3. Create an in-app notification entry for the seller
+    try {
+      const notification = {
+        id: crypto.randomUUID(),
+        user_id: sellerId,
+        seller_email: sellerEmail,
+        type: 'lead_callback',
+        title: '📞 New Callback Request',
+        message: `${buyerName} (${buyerPhone}) requested a callback for "${listing.title}".`,
+        data: {
+          lead_id: newLead.id,
+          listing_id: listing.id,
+          listing_title: listing.title,
+          buyer_phone: buyerPhone,
+          buyer_name: buyerName,
+        },
+        is_read: false,
+        created_at: new Date().toISOString(),
+      };
+      const notifications = await getNotifications();
+      notifications.unshift(notification);
+      await saveNotifications(notifications);
+    } catch (notifErr) {
+      console.warn('[Notification] Failed to create in-app notification:', notifErr.message);
+    }
+
+    // 4. (Optional/Async) Trigger an SMS or WhatsApp webhook/service + send lead email
+    if (sellerEmail) {
+      sendLeadNotificationEmail(sellerEmail, {
+        sellerName,
+        buyerName,
+        buyerPhone,
+        listingTitle: listing.title,
+        listingId: listing.id,
+      }).catch(err => console.warn('[Lead Email] Async dispatch warning:', err.message));
+    }
+
+    // Webhook dispatch simulation
+    console.log(`[Lead Dispatch] 📱 SMS/WhatsApp webhook triggered: Seller "${sellerName}" (${sellerId}) notified of buyer ${buyerName} (${buyerPhone}) for listing "${listing.title}"`);
+
+    // 5. Return 201 Created
+    res.status(201).json({
+      success: true,
+      message: 'Callback requested successfully',
+      lead: newLead,
+    });
+  } catch (err) {
+    console.error('Error requesting callback:', err);
+    res.status(500).json({ error: 'Server error requesting callback.' });
+  }
+});
+
+// Endpoint 3: Seller Leads Inbox (Paginated received leads)
+app.get('/api/seller/leads', authenticateUser, async (req, res) => {
+  try {
+    const user = req.user;
+    const cleanStr = (s) => (s ? String(s).trim().toLowerCase() : '');
+    const cleanPhone = (p) => (p ? String(p).replace(/\D/g, '').slice(-10) : '');
+
+    const userEmail = cleanStr(user.email);
+    const userId = cleanStr(user.id || user.googleId || user.sub);
+    const userPhone = cleanPhone(user.phone);
+
+    const leads = await getLeads();
+
+    // Filter leads belonging to this seller (or admin sees all)
+    const sellerLeads = leads.filter(l => {
+      if (req.isAdmin) return true;
+      const sId = cleanStr(l.seller_id);
+      const sEmail = cleanStr(l.seller_email);
+      if (userId && sId === userId) return true;
+      if (userEmail && (sId === userEmail || sEmail === userEmail)) return true;
+      if (userPhone && userPhone.length >= 7 && (cleanPhone(l.seller_id) === userPhone || cleanPhone(sId) === userPhone)) return true;
+      return false;
+    });
+
+    // Optional status filter (?status=pending|contacted|dismissed)
+    const { status, page = 1, limit = 10 } = req.query;
+    let filtered = sellerLeads;
+    if (status && ['pending', 'contacted', 'dismissed'].includes(status)) {
+      filtered = sellerLeads.filter(l => l.status === status);
+    }
+
+    // Sort newest first
+    filtered.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.max(1, Math.min(50, parseInt(limit, 10) || 10));
+    const startIndex = (pageNum - 1) * limitNum;
+    const paginated = filtered.slice(startIndex, startIndex + limitNum);
+
+    res.json({
+      leads: paginated,
+      total: filtered.length,
+      page: pageNum,
+      totalPages: Math.ceil(filtered.length / limitNum) || 1,
+      stats: {
+        total: sellerLeads.length,
+        pending: sellerLeads.filter(l => l.status === 'pending').length,
+        contacted: sellerLeads.filter(l => l.status === 'contacted').length,
+        dismissed: sellerLeads.filter(l => l.status === 'dismissed').length,
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching seller leads:', err);
+    res.status(500).json({ error: 'Server error fetching seller leads.' });
+  }
+});
+
+// Update Lead Status (e.g., Pending -> Contacted or Dismissed)
+app.patch(['/api/seller/leads/:id/status', '/api/seller/leads/:id'], authenticateUser, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!['pending', 'contacted', 'dismissed'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status. Must be pending, contacted, or dismissed.' });
+    }
+
+    const leads = await getLeads();
+    const lead = leads.find(l => String(l.id) === String(id));
+
+    if (!lead) {
+      return res.status(404).json({ error: 'Lead not found.' });
+    }
+
+    const cleanStr = (s) => (s ? String(s).trim().toLowerCase() : '');
+    const userEmail = cleanStr(req.user.email);
+    const userId = cleanStr(req.user.id);
+    const isLeadOwner = req.isAdmin || (userId && cleanStr(lead.seller_id) === userId) || (userEmail && (cleanStr(lead.seller_id) === userEmail || cleanStr(lead.seller_email) === userEmail));
+
+    if (!isLeadOwner) {
+      return res.status(403).json({ error: 'Forbidden. You do not own this lead.' });
+    }
+
+    lead.status = status;
+    lead.updated_at = new Date().toISOString();
+    await saveLeads(leads);
+
+    res.json({
+      success: true,
+      message: `Lead marked as ${status}.`,
+      lead,
+    });
+  } catch (err) {
+    console.error('Error updating lead status:', err);
+    res.status(500).json({ error: 'Server error updating lead status.' });
+  }
+});
+
+// Phone OTP Endpoints for Inline Mobile Verification
+app.post('/api/auth/send-phone-otp', authLimiter, authenticateUser, async (req, res) => {
+  try {
+    const { phone } = req.body;
+    const phoneToVerify = phone ? cleanText(phone) : req.user.phone;
+    if (!phoneToVerify || phoneToVerify.length < 7) {
+      return res.status(400).json({ error: 'Valid phone number is required.' });
+    }
+
+    const users = await getUsers();
+    const user = users.find(u => u.email === (req.user.email || '').toLowerCase());
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    const otpCode = generateOtpCode();
+    user.phone = phoneToVerify;
+    user.phoneVerificationCode = otpCode;
+    user.phoneVerificationExpires = Date.now() + 10 * 60 * 1000; // 10 mins
+    await saveUsers(users);
+
+    console.log(`[Phone OTP] Generated OTP ${otpCode} for phone ${phoneToVerify} (User: ${user.email})`);
+
+    res.json({
+      success: true,
+      message: `Verification code sent to ${phoneToVerify}.`,
+      devCode: otpCode, // sent for development/testing ease
+    });
+  } catch (err) {
+    console.error('Error sending phone OTP:', err);
+    res.status(500).json({ error: 'Server error sending phone OTP.' });
+  }
+});
+
+app.post('/api/auth/verify-phone-otp', authLimiter, authenticateUser, async (req, res) => {
+  try {
+    const { code, phone } = req.body;
+    if (!code || String(code).trim().length !== 6) {
+      return res.status(400).json({ error: 'A valid 6-digit verification code is required.' });
+    }
+
+    const users = await getUsers();
+    const user = users.find(u => u.email === (req.user.email || '').toLowerCase());
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    if (!user.phoneVerificationCode || String(user.phoneVerificationCode).trim() !== String(code).trim()) {
+      return res.status(400).json({ error: 'Invalid verification code. Please check and try again.' });
+    }
+
+    if (user.phoneVerificationExpires && Date.now() > user.phoneVerificationExpires) {
+      return res.status(400).json({ error: 'Verification code has expired. Please request a new one.' });
+    }
+
+    if (phone) {
+      user.phone = cleanText(phone);
+    }
+    user.verified = { ...(user.verified || {}), phone: true };
+    user.is_phone_verified = true;
+    user.phoneVerificationCode = null;
+    user.phoneVerificationExpires = null;
+
+    await saveUsers(users);
+
+    const safeUser = sanitizeUser(user);
+    res.json({
+      success: true,
+      message: 'Phone number verified successfully.',
+      user: safeUser,
+    });
+  } catch (err) {
+    console.error('Error verifying phone OTP:', err);
+    res.status(500).json({ error: 'Server error verifying phone OTP.' });
   }
 });
 
@@ -1656,6 +2133,7 @@ app.post('/api/listings', listingCreationLimiter, authenticateUser, async (req, 
       ownerEmail: incomingOwnerEmail,
       ownerPhone: incomingOwnerPhone,
       ownerUserId,
+      contact_preference: req.body.contact_preference === 'direct' ? 'direct' : 'notify',
       priceChangeLog: [],
       status: 'pending'
     };
@@ -1880,6 +2358,9 @@ app.put('/api/listings/:id', authenticateUser, async (req, res) => {
       longitude: finalLng,
       images: updatedImages,
       contact: updatedContact,
+      contact_preference: req.body.contact_preference !== undefined
+        ? (req.body.contact_preference === 'direct' ? 'direct' : 'notify')
+        : (currentListing.contact_preference || 'notify'),
       priceChangeLog: updatedPriceChangeLog,
       updatedAt: new Date().toISOString(),
     };

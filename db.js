@@ -17,6 +17,8 @@ const REPORTS_FILE = path.join(DATA_DIR, 'reports.json');
 const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const INQUIRIES_FILE = path.join(DATA_DIR, 'inquiries.json');
+const LEADS_FILE = path.join(DATA_DIR, 'listing_leads.json');
+const NOTIFICATIONS_FILE = path.join(DATA_DIR, 'notifications.json');
 
 // TTL In-Memory Cache (4 seconds TTL for lightning fast responses while keeping multi-process sync)
 const CACHE_TTL_MS = 4000;
@@ -27,6 +29,8 @@ const cacheTimestamps = {
   categories: 0,
   settings: 0,
   inquiries: 0,
+  leads: 0,
+  notifications: 0,
 };
 
 // Lazy-initialize Supabase Client
@@ -204,6 +208,8 @@ const reportsStore = new AtomicJSONStore(REPORTS_FILE, []);
 const categoriesStore = new AtomicJSONStore(CATEGORIES_FILE, CATEGORIES_SEED);
 const settingsStore = new AtomicJSONStore(SETTINGS_FILE, SETTINGS_SEED);
 const inquiriesStore = new AtomicJSONStore(INQUIRIES_FILE, []);
+const leadsStore = new AtomicJSONStore(LEADS_FILE, []);
+const notificationsStore = new AtomicJSONStore(NOTIFICATIONS_FILE, []);
 
 // In-Memory Data Cache
 const cache = {
@@ -213,6 +219,8 @@ const cache = {
   categories: null,
   settings: null,
   inquiries: null,
+  leads: null,
+  notifications: null,
 };
 
 // Supabase Helper Functions
@@ -254,6 +262,15 @@ async function saveSupabaseCollection(tableName, data) {
         };
         if (tableName === 'users') {
           row.email = String(item.email || item.id);
+        } else if (tableName === 'listing_leads') {
+          row.id = String(item.id || crypto.randomUUID());
+          row.listing_id = String(item.listing_id || item.listingId || '');
+          row.seller_id = String(item.seller_id || item.sellerId || '');
+          row.buyer_id = String(item.buyer_id || item.buyerId || '');
+          row.buyer_phone = String(item.buyer_phone || item.buyerPhone || '');
+          row.buyer_name = String(item.buyer_name || item.buyerName || '');
+          row.status = String(item.status || 'pending');
+          row.created_at = item.created_at || item.createdAt || new Date().toISOString();
         } else {
           row.id = String(item.id || item.email || item.phone || crypto.randomUUID());
         }
@@ -526,6 +543,66 @@ export async function saveInquiries(inquiries) {
   }
   saveFirestoreCollection('inquiries', inquiries).catch(() => {});
   await inquiriesStore.write(inquiries);
+}
+
+export async function getLeads() {
+  const now = Date.now();
+  if (cache.leads !== null && now - cacheTimestamps.leads < CACHE_TTL_MS) {
+    return cache.leads;
+  }
+  const sbData = await getSupabaseCollection('listing_leads', []);
+  if (sbData !== null) {
+    cache.leads = sbData;
+    cacheTimestamps.leads = now;
+    return sbData;
+  }
+  const fsData = await getFirestoreCollection('listing_leads', []);
+  const data = fsData !== null ? fsData : await leadsStore.read();
+  cache.leads = data;
+  cacheTimestamps.leads = now;
+  return data;
+}
+
+export async function saveLeads(leads) {
+  cache.leads = leads;
+  cacheTimestamps.leads = Date.now();
+  try {
+    await saveSupabaseCollection('listing_leads', leads);
+  } catch (err) {
+    console.error('[Supabase] Error saving leads:', err.message);
+  }
+  saveFirestoreCollection('listing_leads', leads).catch(() => {});
+  await leadsStore.write(leads);
+}
+
+export async function getNotifications() {
+  const now = Date.now();
+  if (cache.notifications !== null && now - cacheTimestamps.notifications < CACHE_TTL_MS) {
+    return cache.notifications;
+  }
+  const sbData = await getSupabaseCollection('notifications', []);
+  if (sbData !== null) {
+    cache.notifications = sbData;
+    cacheTimestamps.notifications = now;
+    return sbData;
+  }
+  const fsData = await getFirestoreCollection('notifications', []);
+  const data = fsData !== null ? fsData : await notificationsStore.read();
+  cache.notifications = data;
+  cacheTimestamps.notifications = now;
+  return data;
+}
+
+export async function saveNotifications(notifications) {
+  cache.notifications = notifications;
+  cacheTimestamps.notifications = Date.now();
+  try {
+    await saveSupabaseCollection('notifications', notifications);
+  } catch (err) {
+    console.error('[Supabase] Error saving notifications:', err.message);
+  }
+  saveFirestoreCollection('notifications', notifications).catch(() => {});
+  await notificationsStore.write(notifications);
 }
 
 /**

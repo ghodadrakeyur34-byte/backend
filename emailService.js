@@ -310,6 +310,113 @@ export async function sendVerificationEmail(toEmail, otpCode) {
     console.error('[Email Service] Error sending email:', err.message);
     return { success: false, error: 'Failed to deliver email.' };
   }
+}
 
+/**
+ * Send Instant Lead / Callback Notification Email to Property Seller
+ */
+export async function sendLeadNotificationEmail(toEmail, { sellerName, buyerName, buyerPhone, listingTitle, listingId }) {
+  if (!toEmail || !toEmail.includes('@')) return { success: false, error: 'Invalid seller email' };
+
+  try {
+    const primary = getPrimaryTransporter();
+    const fallback = getFallbackTransporter();
+    if (!primary && !fallback) {
+      console.warn('[Email Service] No transporter configured for lead notification.');
+      return { success: false };
+    }
+
+    const fromAddress = `"Mari Milkat Leads" <${process.env.GMAIL_USER || 'notifications@marimilkat.com'}>`;
+    const cleanBuyerName = buyerName || 'A verified buyer';
+    const cleanPhone = buyerPhone || '';
+    const cleanTitle = listingTitle || 'Your Property';
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head><meta charset="utf-8"></head>
+      <body style="margin: 0; padding: 0; background-color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #f8fafc;">
+        <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #0f172a; padding: 40px 15px;">
+          <tr>
+            <td align="center">
+              <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 540px; background-color: #1e293b; border-radius: 16px; border: 1px solid #334155; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);">
+                <tr>
+                  <td style="padding: 32px 32px 20px 32px; text-align: center; border-bottom: 1px solid #334155; background: linear-gradient(180deg, rgba(226,184,87,0.12) 0%, rgba(30,41,59,0) 100%);">
+                    <h1 style="margin: 0; color: #e2b857; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">Mari Milkat</h1>
+                    <p style="margin: 6px 0 0 0; color: #94a3b8; font-size: 13px;">Instant Lead Dispatch</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 32px;">
+                    <div style="background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3); border-radius: 8px; padding: 12px 16px; margin-bottom: 24px; text-align: center;">
+                      <span style="color: #4ade80; font-weight: 600; font-size: 15px;">📞 New Callback Request Received!</span>
+                    </div>
+
+                    <p style="margin: 0 0 16px 0; font-size: 15px; line-height: 24px; color: #e2e8f0;">
+                      Hello <strong>${sellerName || 'Seller'}</strong>,
+                    </p>
+                    <p style="margin: 0 0 24px 0; font-size: 15px; line-height: 24px; color: #94a3b8;">
+                      A verified buyer has requested a phone callback regarding your property listing:
+                    </p>
+
+                    <div style="background-color: #0f172a; border: 1px solid #334155; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
+                      <div style="font-size: 13px; color: #94a3b8; margin-bottom: 4px;">Property Listing</div>
+                      <div style="font-size: 16px; font-weight: 600; color: #f8fafc; margin-bottom: 16px;">${cleanTitle}</div>
+
+                      <div style="font-size: 13px; color: #94a3b8; margin-bottom: 4px;">Buyer Name</div>
+                      <div style="font-size: 15px; font-weight: 600; color: #f8fafc; margin-bottom: 16px;">${cleanBuyerName}</div>
+
+                      <div style="font-size: 13px; color: #94a3b8; margin-bottom: 4px;">Verified Phone Number</div>
+                      <div style="font-size: 18px; font-weight: 700; color: #e2b857; letter-spacing: 0.5px;">${cleanPhone}</div>
+                    </div>
+
+                    <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                      <tr>
+                        <td align="center">
+                          <a href="tel:${cleanPhone}" style="display: inline-block; background-color: #e2b857; color: #0f172a; font-size: 15px; font-weight: 700; text-decoration: none; padding: 14px 32px; border-radius: 8px; box-shadow: 0 4px 12px rgba(226, 184, 87, 0.25);">
+                            Call Buyer Now (${cleanPhone})
+                          </a>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding: 20px 32px; background-color: #0b1120; border-top: 1px solid #1e293b; text-align: center;">
+                    <p style="margin: 0; color: #64748b; font-size: 12px;">
+                      This lead was safely routed to protect your phone privacy on Mari Milkat.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+      </html>
+    `;
+
+    const mailOptions = {
+      from: fromAddress,
+      to: toEmail,
+      subject: `📞 New Callback Request from ${cleanBuyerName} - Mari Milkat`,
+      text: `Hello ${sellerName || 'Seller'},\n\n${cleanBuyerName} requested a callback for "${cleanTitle}".\nBuyer Phone: ${cleanPhone}\n\nCall them back to close the deal!`,
+      html: htmlContent,
+      priority: 'high',
+    };
+
+    if (primary) {
+      primary.sendMail(mailOptions).catch(() => {
+        if (fallback) fallback.sendMail(mailOptions).catch(() => {});
+      });
+    } else if (fallback) {
+      fallback.sendMail(mailOptions).catch(() => {});
+    }
+
+    return { success: true };
+  } catch (err) {
+    console.error('[Email Service] Error sending lead notification email:', err.message);
+    return { success: false, error: err.message };
+  }
 }
 

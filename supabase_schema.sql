@@ -204,3 +204,39 @@ CREATE POLICY "Allow Deletes"
 ON storage.objects FOR DELETE
 TO service_role, authenticated
 USING (bucket_id = 'property-images');
+
+-- ==========================================================
+-- 8. Listing Leads & Seller Inquiries (Contact Privacy System)
+-- ==========================================================
+ALTER TABLE public.listings ADD COLUMN IF NOT EXISTS contact_preference VARCHAR(20) DEFAULT 'notify';
+CREATE INDEX IF NOT EXISTS idx_listings_contact_preference ON public.listings (contact_preference);
+CREATE INDEX IF NOT EXISTS idx_listings_data_contact_pref ON public.listings ((data->>'contact_preference'));
+
+CREATE TABLE IF NOT EXISTS public.listing_leads (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  listing_id TEXT NOT NULL,
+  seller_id TEXT NOT NULL,
+  buyer_id TEXT NOT NULL,
+  buyer_phone VARCHAR(15) NOT NULL,
+  buyer_name VARCHAR(100) NOT NULL,
+  status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'contacted', 'dismissed')),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  data JSONB DEFAULT '{}'::jsonb,
+  CONSTRAINT uq_listing_leads_listing_buyer UNIQUE (listing_id, buyer_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_listing_leads_seller_id ON public.listing_leads (seller_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_listing_leads_listing_id ON public.listing_leads (listing_id);
+CREATE INDEX IF NOT EXISTS idx_listing_leads_status ON public.listing_leads (status);
+
+ALTER TABLE public.listing_leads ENABLE ROW LEVEL SECURITY;
+GRANT ALL ON TABLE public.listing_leads TO service_role;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.listing_leads TO authenticated;
+
+CREATE POLICY "Service Role Full Access listing_leads"
+ON public.listing_leads FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
