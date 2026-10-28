@@ -25,6 +25,7 @@ import { fileTypeFromBuffer } from 'file-type';
 import cookieParser from 'cookie-parser';
 import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
+import admin from 'firebase-admin';
 import { sendVerificationEmail, sendLeadNotificationEmail } from './emailService.js';
 import { getListings, saveListings, getUsers, saveUsers, getReports, saveReports, getCategories, saveCategories, getSettings, saveSettings, getInquiries, saveInquiries, getLeads, saveLeads, getNotifications, saveNotifications, checkStorageHealth } from './db.js';
 import { uploadImageToSupabase, processListingImages, deleteStorageImage } from './storageService.js';
@@ -78,6 +79,80 @@ const JWT_EXPIRES_IN = '30d'; // 30-day persistent user session
 const REFRESH_EXPIRES_IN = '90d'; // 90-day persistent refresh window
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+
+// Firebase Admin & Token Verification Configuration
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'mari-milkat-49813';
+try {
+  if (!admin.apps.length) {
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      const sa = typeof process.env.FIREBASE_SERVICE_ACCOUNT === 'string'
+        ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+        : process.env.FIREBASE_SERVICE_ACCOUNT;
+      admin.initializeApp({
+        credential: admin.credential.cert(sa),
+        projectId: sa.project_id || FIREBASE_PROJECT_ID,
+      });
+    } else {
+      admin.initializeApp({
+        projectId: FIREBASE_PROJECT_ID,
+      });
+    }
+  }
+} catch (fbInitErr) {
+  console.warn('[Firebase Admin] Init warning:', fbInitErr.message);
+}
+
+/**
+ * Robust Firebase ID Token Verifier
+ * 1) Attempts admin.auth().verifyIdToken()
+ * 2) Falls back to Google's public x509 certs verification
+ */
+async function verifyFirebaseIdToken(idToken) {
+  if (!idToken || typeof idToken !== 'string') {
+    throw new Error('Firebase ID token is required.');
+  }
+
+  // 1. Try Firebase Admin SDK
+  try {
+    if (admin.apps.length) {
+      const decoded = await admin.auth().verifyIdToken(idToken);
+      if (decoded && (decoded.phone_number || decoded.uid)) {
+        return decoded;
+      }
+    }
+  } catch (adminErr) {
+    console.warn('[Firebase Auth] admin.auth().verifyIdToken warning:', adminErr.message);
+  }
+
+  // 2. Cryptographic verification using Google's public x509 certificates
+  try {
+    const decodedHeader = jwt.decode(idToken, { complete: true });
+    if (!decodedHeader || !decodedHeader.header || !decodedHeader.header.kid) {
+      throw new Error('Malformed Firebase ID token header.');
+    }
+
+    const certRes = await fetch('https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com');
+    if (!certRes.ok) {
+      throw new Error('Failed to fetch Google public certificates.');
+    }
+    const certs = await certRes.json();
+    const cert = certs[decodedHeader.header.kid];
+    if (!cert) {
+      throw new Error('Certificate not found for key ID: ' + decodedHeader.header.kid);
+    }
+
+    const verified = jwt.verify(idToken, cert, {
+      algorithms: ['RS256'],
+      audience: FIREBASE_PROJECT_ID,
+      issuer: `https://securetoken.google.com/${FIREBASE_PROJECT_ID}`,
+    });
+
+    return verified;
+  } catch (jwtErr) {
+    console.error('[Firebase Auth] Fallback verification error:', jwtErr.message);
+    throw new Error('Firebase token verification failed: ' + jwtErr.message);
+  }
+}
 
 // ===== SECURITY MIDDLEWARE =====
 
@@ -859,6 +934,110 @@ app.post('/api/auth/google', authLimiter, async (req, res) => {
   } catch (err) {
     console.error('Error during Google authentication:', err);
     return res.status(500).json({ error: 'Server error during Google authentication.' });
+  }
+});
+
+// Firebase Phone OTP Authentication (Sign In, Sign Up, or Account Phone Verification)
+app.post('/api/auth/firebase-phone', authLimiter, async (req, res) => {
+  try {
+    const { idToken, name, email } = req.body;
+    if (!idToken) {
+      return res.status(400).json({ error: 'Firebase ID token is required.' });
+    }
+
+    const decoded = await verifyFirebaseIdToken(idToken);
+    const verifiedPhone = decoded.phone_number;
+    if (!verifiedPhone) {
+      return res.status(400).json({ error: 'Firebase token did not contain a verified phone number.' });
+    }
+
+    const clean10Digits = verifiedPhone.replace(/\D/g, '').slice(-10);
+    const users = await getUsers();
+
+    // Check if an existing logged-in user called this endpoint to verify their phone
+    let loggedInUser = null;
+    const authHeader = req.headers['authorization'];
+    const authToken = (authHeader && authHeader.split(' ')[1]) || req.cookies?.accessToken || req.headers['x-auth-token'];
+    if (authToken) {
+      try {
+        const decodedToken = jwt.verify(authToken, JWT_SECRET);
+        if (decodedToken) {
+          loggedInUser = users.find((u) =>
+            (decodedToken.email && u.email && u.email.toLowerCase() === decodedToken.email.toLowerCase()) ||
+            (decodedToken.phone && u.phone && u.phone.replace(/\D/g, '').slice(-10) === decodedToken.phone.replace(/\D/g, '').slice(-10))
+          );
+        }
+      } catch (e) {
+        // Not a valid existing session, proceed as unauthenticated phone sign in
+      }
+    }
+
+    let user = loggedInUser;
+
+    if (!user) {
+      // Find user by phone number or by email if provided
+      user = users.find((u) => {
+        const uPhoneDigits = u.phone ? u.phone.replace(/\D/g, '').slice(-10) : '';
+        return (uPhoneDigits && uPhoneDigits === clean10Digits) || (u.phone && u.phone === verifiedPhone);
+      });
+
+      if (!user && email) {
+        const cleanEmail = cleanText(email).toLowerCase();
+        user = users.find((u) => u.email === cleanEmail);
+      }
+    }
+
+    if (user) {
+      if (user.status === 'banned' || user.status === 'suspended') {
+        return res.status(403).json({ error: 'Your account has been ' + user.status + '. Contact support for assistance.' });
+      }
+
+      user.phone = verifiedPhone;
+      user.is_phone_verified = true;
+      user.verified = {
+        ...(user.verified || {}),
+        phone: true,
+      };
+      if (name && (!user.name || user.name.startsWith('User '))) {
+        user.name = cleanText(name);
+      }
+      user.firebaseUid = decoded.uid || decoded.sub;
+      user.loggedInAt = new Date().toISOString();
+      await saveUsers(users);
+    } else {
+      // Create new user authenticated via Firebase Phone
+      const userName = cleanText(name) || `User ${clean10Digits.slice(-4)}`;
+      user = {
+        id: 'user_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+        phone: verifiedPhone,
+        email: cleanText(email || ''),
+        name: userName,
+        avatar: '',
+        firebaseUid: decoded.uid || decoded.sub,
+        createdAt: new Date().toISOString(),
+        loggedInAt: new Date().toISOString(),
+        status: 'active',
+        is_phone_verified: true,
+        verified: { phone: true, email: !!email, google: false, id: false },
+      };
+      users.push(user);
+      await saveUsers(users);
+    }
+
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+    setAuthCookies(res, accessToken, refreshToken, req);
+
+    return res.json({
+      success: true,
+      message: 'Mobile number verified successfully.',
+      user: { ...sanitizeUser(user), token: accessToken, refreshToken },
+      accessToken,
+      refreshToken,
+    });
+  } catch (err) {
+    console.error('Error during Firebase Phone authentication:', err);
+    return res.status(401).json({ error: err.message || 'Firebase phone authentication failed.' });
   }
 });
 
@@ -2021,15 +2200,44 @@ app.post('/api/auth/send-phone-otp', authLimiter, authenticateUser, async (req, 
 
 app.post('/api/auth/verify-phone-otp', authLimiter, authenticateUser, async (req, res) => {
   try {
-    const { code, phone } = req.body;
-    if (!code || String(code).trim().length !== 6) {
-      return res.status(400).json({ error: 'A valid 6-digit verification code is required.' });
-    }
+    const { code, phone, idToken } = req.body;
 
     const users = await getUsers();
-    const user = users.find(u => u.email === (req.user.email || '').toLowerCase());
+    const user = users.find(
+      (u) =>
+        (req.user?.email && u.email && u.email.toLowerCase() === req.user.email.toLowerCase()) ||
+        (req.user?.phone && u.phone && u.phone.replace(/\D/g, '').slice(-10) === req.user.phone.replace(/\D/g, '').slice(-10))
+    );
     if (!user) {
       return res.status(404).json({ error: 'User not found.' });
+    }
+
+    // 1. Firebase Token Verification
+    if (idToken) {
+      const decoded = await verifyFirebaseIdToken(idToken);
+      const verifiedPhone = decoded.phone_number || (phone ? cleanText(phone) : user.phone);
+      if (verifiedPhone) {
+        user.phone = verifiedPhone;
+      }
+      user.verified = { ...(user.verified || {}), phone: true };
+      user.is_phone_verified = true;
+      user.firebaseUid = decoded.uid || decoded.sub;
+      user.phoneVerificationCode = null;
+      user.phoneVerificationExpires = null;
+
+      await saveUsers(users);
+
+      const safeUser = sanitizeUser(user);
+      return res.json({
+        success: true,
+        message: 'Phone number verified successfully with Firebase.',
+        user: safeUser,
+      });
+    }
+
+    // 2. Direct OTP Code Verification Fallback
+    if (!code || String(code).trim().length !== 6) {
+      return res.status(400).json({ error: 'A valid 6-digit verification code is required.' });
     }
 
     if (!user.phoneVerificationCode || String(user.phoneVerificationCode).trim() !== String(code).trim()) {
