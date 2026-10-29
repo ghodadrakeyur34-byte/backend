@@ -29,6 +29,7 @@ import admin from 'firebase-admin';
 import { sendVerificationEmail, sendLeadNotificationEmail } from './emailService.js';
 import { getListings, saveListings, getUsers, saveUsers, getReports, saveReports, getCategories, saveCategories, getSettings, saveSettings, getInquiries, saveInquiries, getLeads, saveLeads, getNotifications, saveNotifications, checkStorageHealth } from './db.js';
 import { uploadImageToSupabase, processListingImages, deleteStorageImage } from './storageService.js';
+import { getVapidPublicKey, addSubscription, removeSubscription, sendPushNotification, sendPushToUser, broadcastPushNotification } from './pushService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2054,7 +2055,28 @@ app.post('/api/listings/:id/request-callback', leadRequestLimiter, authenticateU
     // Webhook dispatch simulation
     console.log(`[Lead Dispatch] 📱 SMS/WhatsApp webhook triggered: Seller "${sellerName}" (${sellerId}) notified of buyer ${buyerName} (${buyerPhone}) for listing "${listing.title}"`);
 
-    // 5. Return 201 Created
+    // 5. Web Push Notification: alerts seller immediately even when browser is closed!
+    try {
+      const pushPayload = {
+        title: '📞 New Callback Request!',
+        body: `${buyerName} (${buyerPhone}) requested a callback for "${listing.title}".`,
+        icon: '/icons/icon-192.png',
+        badge: '/icons/icon-192.png',
+        url: `/#detail/${listing.id}`,
+        tag: `lead-${newLead.id}`,
+        data: {
+          leadId: newLead.id,
+          listingId: listing.id,
+          url: `/#detail/${listing.id}`,
+        },
+      };
+      if (sellerEmail) sendPushToUser(sellerEmail, pushPayload).catch(() => {});
+      if (sellerPhone) sendPushToUser(sellerPhone, pushPayload).catch(() => {});
+    } catch (pushErr) {
+      console.warn('[Push] Failed to trigger seller web push:', pushErr.message);
+    }
+
+    // 6. Return 201 Created
     res.status(201).json({
       success: true,
       message: 'Callback requested successfully',
@@ -2267,6 +2289,93 @@ app.post('/api/auth/verify-phone-otp', authLimiter, authenticateUser, async (req
   } catch (err) {
     console.error('Error verifying phone OTP:', err);
     res.status(500).json({ error: 'Server error verifying phone OTP.' });
+  }
+});
+
+// ===== WEB PUSH NOTIFICATION ENDPOINTS =====
+
+// Get VAPID public key for browser push subscription
+app.get('/api/push/vapid-public-key', (req, res) => {
+  try {
+    const key = getVapidPublicKey();
+    res.json({ publicKey: key });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to retrieve VAPID public key' });
+  }
+});
+
+// Subscribe a browser/device to Web Push Notifications (Requires 0 contact info!)
+app.post('/api/push/subscribe', async (req, res) => {
+  try {
+    const { subscription, user } = req.body || {};
+    if (!subscription || !subscription.endpoint) {
+      return res.status(400).json({ error: 'Valid push subscription object is required.' });
+    }
+
+    // Associate with authenticated user if present
+    let authUser = null;
+    const authHeader = req.headers.authorization;
+    const token = (authHeader && authHeader.startsWith('Bearer ') && authHeader.split(' ')[1]) || req.cookies?.accessToken;
+    if (token) {
+      try {
+        authUser = jwt.verify(token, JWT_SECRET);
+      } catch (e) {}
+    }
+
+    const targetUser = authUser || user || null;
+    addSubscription(subscription, targetUser);
+
+    console.log(`[Push] Registered push subscription for endpoint: ${subscription.endpoint.slice(0, 45)}...`);
+    res.json({
+      success: true,
+      message: 'Push notification subscription saved successfully.',
+    });
+  } catch (err) {
+    console.error('[Push] Subscription registration error:', err);
+    res.status(500).json({ error: 'Failed to register push subscription' });
+  }
+});
+
+// Unsubscribe endpoint
+app.post('/api/push/unsubscribe', async (req, res) => {
+  try {
+    const { endpoint } = req.body || {};
+    if (endpoint) {
+      removeSubscription(endpoint);
+    }
+    res.json({ success: true, message: 'Unsubscribed successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to unsubscribe' });
+  }
+});
+
+// Send a test push notification (to verify it works when tab is closed!)
+app.post('/api/push/send-test', async (req, res) => {
+  try {
+    const { subscription, title, body } = req.body || {};
+    const testPayload = {
+      title: title || '🎉 Notifications Active!',
+      body: body || 'Mari Milkat notifications are working. You will receive instant property and lead alerts even when this tab is closed!',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      url: '/#browse',
+      tag: `test-push-${Date.now()}`,
+    };
+
+    if (subscription && subscription.endpoint) {
+      const result = await sendPushNotification(subscription, testPayload);
+      return res.json({ success: result.success, message: result.success ? 'Test push notification sent!' : result.error });
+    }
+
+    // Otherwise broadcast test to all subscriptions
+    const result = await broadcastPushNotification(testPayload);
+    res.json({
+      success: true,
+      message: `Test push dispatched to ${result.sent} subscribed devices.`,
+    });
+  } catch (err) {
+    console.error('[Push] Test dispatch error:', err);
+    res.status(500).json({ error: 'Failed to send test push notification' });
   }
 });
 

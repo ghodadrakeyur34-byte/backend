@@ -86,37 +86,37 @@
   "priceRanges": [
     {
       "id": "under5l",
-      "label": "Under ₨ 5 Lac",
+      "label": "Under ₹ 5 Lac",
       "min": 0,
       "max": 500000
     },
     {
       "id": "5l-25l",
-      "label": "₨ 5 Lac – 25 Lac",
+      "label": "₹ 5 Lac – 25 Lac",
       "min": 500000,
       "max": 2500000
     },
     {
       "id": "25l-50l",
-      "label": "₨ 25 Lac – 50 Lac",
+      "label": "₹ 25 Lac – 50 Lac",
       "min": 2500000,
       "max": 5000000
     },
     {
       "id": "50l-1cr",
-      "label": "₨ 50 Lac – 1 Crore",
+      "label": "₹ 50 Lac – 1 Crore",
       "min": 5000000,
       "max": 10000000
     },
     {
       "id": "1cr-5cr",
-      "label": "₨ 1 Crore – 5 Crore",
+      "label": "₹ 1 Crore – 5 Crore",
       "min": 10000000,
       "max": 50000000
     },
     {
       "id": "above5cr",
-      "label": "Above ₨ 5 Crore",
+      "label": "Above ₹ 5 Crore",
       "min": 50000000,
       "max": null
     }
